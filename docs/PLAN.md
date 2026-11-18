@@ -4,7 +4,8 @@ A radio-focused edition of [ZeroOS](https://github.com/hartj77-blip/cardputer-ze
 M5Stack Cardputer Zero **Lite**, built around a USB software-defined radio (SDR) dongle. The first
 supported dongle is the RTL-SDR Blog V4.
 
-Status: plan only. Nothing here is built yet. Items marked **(measure)** are estimates to confirm on
+Status: the radio core in `rf/` (receiver backends, spectrum, daemon) is started and runs against a
+simulated receiver. Nothing has been tried on hardware. Items marked **(measure)** are estimates to confirm on
 a real unit with a real dongle; items marked **(decide)** need an owner decision and are collected
 at the end.
 
@@ -186,6 +187,20 @@ the base goes public, this repository goes private, or CI gets a read token.
 
 All RF apps share one status line (frequency, mode, gain, signal level, a clear "no dongle" state)
 and the same keys for tuning, so learning one teaches the rest.
+
+## Connecting to other radios
+
+The device is a standalone receiver first. Linking to a transceiver is an optional layer on top,
+not something the core depends on:
+
+- **Rig control.** Read and set a rig's frequency and mode over USB serial with Hamlib. Frequency
+  and mode only; no transmit keying.
+- **Panadapter.** The dongle shows the spectrum around the rig's frequency and follows its dial,
+  either from the rig's IF output or from a shared antenna.
+- **Rig audio in.** Decode digital modes from the rig's USB sound card instead of the dongle.
+
+The daemon already has the one thing this needs from the core: a frequency `offset`. A second USB
+device adds to the battery load **(measure)**. Planned after Radio (phase R2).
 
 ## Phases
 

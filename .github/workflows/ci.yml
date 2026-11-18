@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rf:
+    name: Radio core (build and test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config librtlsdr-dev
+      - name: Build
+        run: |
+          cmake -S rf -B build/rf -DCMAKE_CXX_FLAGS=-Werror
+          cmake --build build/rf -j
+      - name: Test
+        run: ctest --test-dir build/rf --output-on-failure
