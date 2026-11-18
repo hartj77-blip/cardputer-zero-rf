@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fstream>
 
+#include "dsp/demod.h"
 #include "dsp/spectrum.h"
 #include "proto.h"
 #include "sdr/source.h"
@@ -131,6 +132,60 @@ static void test_file_source() {
     CHECK(missing && !missing->open(err));
 }
 
+// Strongest audio frequency in Hz, by FFT of the last 8192 samples.
+static double audio_peak_hz(const std::vector<int16_t>& pcm, double rate) {
+    const size_t n = 8192;
+    CHECK(pcm.size() >= n);
+    Spectrum sp(n);
+    std::vector<cf32> v(n);
+    for (size_t i = 0; i < n; ++i) v[i] = cf32(pcm[pcm.size() - n + i] / 32768.0f, 0);
+    sp.add(v.data());
+    auto out = sp.take();
+    // Real input is symmetric; look at positive frequencies above 100 Hz only.
+    size_t lo = n / 2 + size_t(100 * n / rate), best = lo;
+    for (size_t i = lo; i < n; ++i)
+        if (out[i] > out[best]) best = i;
+    return (double(best) - n / 2.0) * rate / n;
+}
+
+static double rms(const std::vector<int16_t>& pcm, size_t from) {
+    double sum = 0;
+    for (size_t i = from; i < pcm.size(); ++i) sum += double(pcm[i]) * pcm[i];
+    return std::sqrt(sum / double(pcm.size() - from)) / 32768.0;
+}
+
+// Each simulated signal demodulates to the tone it carries.
+static void test_demod() {
+    Mode m;
+    CHECK(parse_mode("nfm", m) && m == Mode::Nfm && !parse_mode("ssb", m));
+    struct Case { Mode mode; double hz, rate, tone; };
+    const Case cases[] = {
+        {Mode::Wfm, 98.3e6, 1.024e6, 1000},    // broadcast FM
+        {Mode::Wfm, 98.3e6, 250e3, 1000},      // same station through the narrow view
+        {Mode::Nfm, 162.55e6, 1.024e6, 700},   // narrow FM
+        {Mode::Nfm, 162.55e6, 2.048e6, 700},
+        {Mode::Am, 121.5e6, 1.024e6, 1000},    // airband AM
+    };
+    for (const Case& c : cases) {
+        std::string err;
+        auto src = make_source("sim", err);
+        CHECK(src && src->open(err) && src->set_rate(c.rate) && src->set_freq(c.hz));
+        Demod demod(c.mode, c.rate);
+        CHECK(demod.audio_rate() > 30000 && demod.audio_rate() < 34000);
+        std::vector<cf32> block(4096);
+        std::vector<int16_t> pcm;
+        while (pcm.size() < size_t(demod.audio_rate() * 0.45)) {
+            CHECK(src->read(block.data(), block.size()) == block.size());
+            demod.run(block.data(), block.size(), pcm);
+        }
+        double peak = audio_peak_hz(pcm, demod.audio_rate());
+        if (std::fabs(peak - c.tone) > 15) std::fprintf(stderr, "%s at %.0f: tone %.1f Hz\n", mode_name(c.mode), c.rate, peak);
+        CHECK(std::fabs(peak - c.tone) < 15);
+        double level = rms(pcm, pcm.size() / 2);
+        CHECK(level > 0.1 && level < 0.9);   // audible, not clipped
+    }
+}
+
 int main() {
     test_fft();
     test_spectrum_level_and_position();
@@ -138,6 +193,7 @@ int main() {
     test_proto();
     test_sim_source();
     test_file_source();
+    test_demod();
     std::puts("all DSP tests passed");
     return 0;
 }

@@ -15,6 +15,7 @@ if(PkgConfig_FOUND)
 endif()
 
 add_library(zrfcore STATIC
+    src/dsp/demod.cpp
     src/dsp/spectrum.cpp
     src/sdr/source.cpp
     src/sdr/sim_source.cpp

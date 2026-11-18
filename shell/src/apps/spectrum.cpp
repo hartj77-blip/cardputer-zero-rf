@@ -2,7 +2,8 @@
 //
 // Left/Right tune by one step, Up/Down change the step, Z/X narrow or widen
 // the view, G cycles gain, P toggles peak hold, C centres on the strongest
-// signal. Type a frequency in MHz and press Enter to jump to it.
+// signal, M cycles listening (off, broadcast FM, narrow FM, AM). Type a
+// frequency in MHz and press Enter to jump to it. Audio stops on leaving.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -30,6 +31,8 @@ const double kMinHz = 0.5e6, kMaxHz = 1766e6;   // RTL-SDR Blog V4 range
 const double kSteps[] = {1e3, 10e3, 100e3, 1e6, 10e6};
 const double kSpans[] = {250e3, 1.024e6, 2.048e6};   // sample rates an RTL-SDR accepts
 const int kGains[] = {-1, 0, 10, 20, 30, 40};       // -1 = automatic
+const char* const kModes[] = {"off", "wfm", "nfm", "am"};
+const char* const kModeNames[] = {"", "FM", "NFM", "AM"};
 
 uint16_t rgb565(int r, int g, int b) { return uint16_t((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3)); }
 uint16_t rgb565(uint32_t hex) { return rgb565(hex >> 16 & 255, hex >> 8 & 255, hex & 255); }
@@ -118,6 +121,10 @@ public:
             gain_ = (gain_ + 1) % int(std::size(kGains));
             send_gain();
             break;
+        case 'm': case 'M':
+            mode_ = (mode_ + 1) % int(std::size(kModes));
+            client_.send(std::string("mode ") + kModes[mode_]);
+            break;
         case 'p': case 'P':
             peak_hold_ = !peak_hold_;
             std::fill(peak_.begin(), peak_.end(), 0);
@@ -168,6 +175,7 @@ private:
             send_gain();
             client_.send(fmt("tune %.0f", freq_));
             client_.send(fmt("spectrum %d 15", kW));
+            if (mode_) client_.send(std::string("mode ") + kModes[mode_]);
         }
 
         std::vector<zrf::SpectrumFrame> frames;
@@ -179,7 +187,8 @@ private:
         }
         if (error != error_) {
             error_ = error;
-            if (error_ == "no dongle") set_message("No radio found.\nPlug in an SDR dongle.");
+            if (error_ == "audio output failed") shell_toast("No audio output");
+            else if (error_ == "no dongle") set_message("No radio found.\nPlug in an SDR dongle.");
             else if (!error_.empty()) set_message(("Radio: " + error_).c_str());
         }
         bool drew = false;
@@ -289,11 +298,13 @@ private:
             lv_label_set_text(freq_label_, fmt("%.4f MHz", freq_ / 1e6).c_str());
         }
         std::string gain = kGains[gain_] < 0 ? "auto" : fmt("%d dB", kGains[gain_]);
-        lv_label_set_text(info_label_, fmt("step %s   gain %s", hz_text(kSteps[step_]).c_str(), gain.c_str()).c_str());
+        std::string info = fmt("step %s  gain %s", hz_text(kSteps[step_]).c_str(), gain.c_str());
+        if (mode_) info += fmt("  " LV_SYMBOL_VOLUME_MAX " %s", kModeNames[mode_]);
+        lv_label_set_text(info_label_, info.c_str());
         double half = kSpans[span_] / 2;
         lv_label_set_text(low_label_, fmt("%.3f", (freq_ - half) / 1e6).c_str());
         lv_label_set_text(high_label_, fmt("%.3f", (freq_ + half) / 1e6).c_str());
-        lv_label_set_text(hint_label_, entry_.empty() ? "0-9 go to   Z X span   G gain" : "Enter go   Esc cancel");
+        lv_label_set_text(hint_label_, entry_.empty() ? "0-9 go to  Z X span  M listen" : "Enter go   Esc cancel");
     }
 
     zrf::RadioClient client_;
@@ -305,7 +316,7 @@ private:
     std::vector<uint8_t> last_, peak_ = std::vector<uint8_t>(kW, 0);
     float floor_ = -1;
     double freq_ = 98.3e6;
-    int step_ = 2, span_ = 1, gain_ = 0;
+    int step_ = 2, span_ = 1, gain_ = 0, mode_ = 0;
     bool peak_hold_ = false, spawned_ = false;
     int retry_in_ = 0, failures_ = 0;
     std::string entry_, error_;

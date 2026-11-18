@@ -8,7 +8,7 @@ DIR=$(mktemp -d)
 export ZRFD_SOCKET="$DIR/zrfd.sock"
 trap 'kill "$PID" 2>/dev/null || true; rm -rf "$DIR"' EXIT
 
-"$BIN/zrfd" --source sim &
+"$BIN/zrfd" --source sim --audio "file:$DIR/audio.raw" &
 PID=$!
 for _ in $(seq 50); do [ -S "$ZRFD_SOCKET" ] && break; sleep 0.1; done
 
@@ -47,6 +47,16 @@ col=$("$BIN/zrf" peak 320 | field col)
 "$BIN/zrf" snapshot "$DIR/out.ppm" 320 20 >/dev/null
 [ "$(head -c 14 "$DIR/out.ppm" | tr '\n' ' ')" = "P6 320 70 255 " ] || fail "snapshot header"
 [ "$(stat -c %s "$DIR/out.ppm")" = $((14 + 320 * 70 * 3)) ] || fail "snapshot size"
+
+# Listening writes audio at the reported rate, and stops when the listener leaves.
+"$BIN/zrf" send tune 162550000 >/dev/null
+"$BIN/zrf" listen nfm 2
+sleep 0.3
+status=$("$BIN/zrf" send status)
+[ "$(echo "$status" | field mode)" = off ] || fail "still listening after the listener left: $status"
+bytes=$(stat -c %s "$DIR/audio.raw")
+[ "$bytes" -ge 96000 ] && [ "$bytes" -le 150000 ] || fail "2 s of 32 kHz audio should be about 128000 bytes, got $bytes"
+"$BIN/zrf" send mode ssb >/dev/null && fail "accepted an unknown mode"
 
 # After the last client leaves, the receiver is released again.
 sleep 0.3

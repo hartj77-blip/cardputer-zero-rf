@@ -4,6 +4,7 @@
 //   zrf send <command...>          send one command, print the reply
 //   zrf peak [cols]                strongest column of one spectrum frame
 //   zrf watch [cols]               live spectrum, one text line per frame
+//   zrf listen <wfm|nfm|am> [seconds]   play audio until stopped (or for N seconds)
 //   zrf snapshot <out.ppm> [cols] [rows]   spectrum + waterfall picture
 #include <algorithm>
 #include <cstdio>
@@ -135,6 +136,7 @@ int usage() {
                  "usage: zrf [--socket <path>] send <command...>\n"
                  "       zrf [--socket <path>] peak [cols]\n"
                  "       zrf [--socket <path>] watch [cols]\n"
+                 "       zrf [--socket <path>] listen <wfm|nfm|am> [seconds]\n"
                  "       zrf [--socket <path>] snapshot <out.ppm> [cols] [rows]\n");
     return 2;
 }
@@ -184,6 +186,18 @@ int main(int argc, char** argv) {
             std::fflush(stdout);
         }
         return 1;
+    }
+    if (cmd == "listen") {
+        if (i >= argc) return usage();
+        std::string mode = argv[i++], reply;
+        int seconds = int_arg(0);
+        if (!send_line("mode " + mode) || !read_line(reply)) return 1;
+        if (reply.rfind("ok", 0) != 0) { std::fprintf(stderr, "zrf: %s\n", reply.c_str()); return 1; }
+        // Audio plays for as long as we stay connected.
+        std::string line;
+        for (int waited = 0; seconds == 0 || waited < seconds * 10; ++waited)
+            if (read_line(line, 100) && line.rfind("E ", 0) == 0) std::fprintf(stderr, "zrf: %s\n", line.c_str() + 2);
+        return 0;
     }
     if (cmd == "snapshot") {
         if (i >= argc) return usage();

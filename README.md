@@ -9,7 +9,7 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 
 | Part | Status |
 | --- | --- |
-| `rf/` radio core: receiver backends, spectrum, the radio daemon `zrfd` and its protocol | Working against a simulated receiver and recorded files. Never run on a real dongle. |
+| `rf/` radio core: receiver backends, spectrum, FM and AM demodulation, the radio daemon `zrfd` and its protocol | Working against a simulated receiver and recorded files. Never run on a real dongle; audio checked by measurement, never by ear. |
 | `shell/` the base OS's ZeroShell plus the RF apps. First app: **Spectrum** | Working in the headless build. Never run on a device. |
 | `base/` the base OS, [cardputer-zero](https://github.com/hartj77-blip/cardputer-zero), pinned as a submodule | Unchanged; we build on it, we don't fork it |
 | Image (SD card) build with the SDR packages | Not started |
@@ -17,8 +17,9 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 ## Spectrum
 
 Left/Right tune by one step, Up/Down change the step size, **Z**/**X** narrow or widen the view,
-**G** cycles gain, **P** toggles peak hold, **C** centres on the strongest signal. Type a frequency
-in MHz and press **Enter** to jump to it.
+**G** cycles gain, **P** toggles peak hold, **C** centres on the strongest signal. **M** cycles
+listening: off, broadcast FM, narrow FM, AM. Type a frequency in MHz and press **Enter** to jump
+to it. Audio stops when you leave the app.
 
 ## Build and try on a PC
 

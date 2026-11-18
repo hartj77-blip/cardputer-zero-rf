@@ -20,8 +20,10 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
+#include "dsp/demod.h"
 #include "dsp/spectrum.h"
 #include "proto.h"
 #include "sdr/source.h"
@@ -40,6 +42,7 @@ struct Settings {
     double rate = 1.024e6;
     std::optional<double> gain;   // nullopt = automatic
     int fps = 15;
+    Mode mode = Mode::Off;        // listening: demodulate the tuned frequency to audio
 };
 
 struct Shared {
@@ -56,6 +59,7 @@ struct Shared {
     std::string error;        // last open/read failure, "" when running
     uint64_t error_seq = 0;
     bool running = false;
+    double audio_rate = 0;    // 0 when not listening
 };
 
 Shared g;
@@ -75,6 +79,69 @@ void report_error(const std::string& msg) {
     wake_main();
 }
 
+// Where demodulated audio goes: "none", "file:<path>" (raw 16-bit mono) or
+// "cmd:<shell command>" fed on its standard input, with %r replaced by the
+// sample rate.
+std::string g_audio_spec = "cmd:aplay -q -t raw -f S16_LE -c 1 -r %r";
+
+class AudioSink {
+public:
+    ~AudioSink() { close(); }
+    bool open(double rate) {
+        close();
+        if (g_audio_spec == "none") return true;
+        if (g_audio_spec.rfind("file:", 0) == 0) {
+            fd_ = ::open(g_audio_spec.c_str() + 5, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+            return fd_ >= 0;
+        }
+        if (g_audio_spec.rfind("cmd:", 0) != 0) return false;
+        std::string cmd = g_audio_spec.substr(4);
+        size_t at = cmd.find("%r");
+        if (at != std::string::npos) cmd.replace(at, 2, std::to_string(std::lround(rate)));
+        int p[2];
+        if (pipe2(p, O_CLOEXEC) != 0) return false;
+        pid_ = fork();
+        if (pid_ < 0) { ::close(p[0]); ::close(p[1]); return false; }
+        if (pid_ == 0) {
+            dup2(p[0], 0);
+            execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+            _exit(127);
+        }
+        ::close(p[0]);
+        fd_ = p[1];
+        // Never let a stalled player hold up the receiver: drop audio instead.
+        fcntl(fd_, F_SETFL, fcntl(fd_, F_GETFL) | O_NONBLOCK);
+        return true;
+    }
+    // False once the output has failed (for example the player exited).
+    bool write(const std::vector<int16_t>& pcm) {
+        if (fd_ < 0 || pcm.empty()) return true;
+        ssize_t n = ::write(fd_, pcm.data(), pcm.size() * 2);
+        if (n >= 0 || errno == EAGAIN || errno == EINTR) return true;
+        close();
+        return false;
+    }
+    void close() {
+        if (fd_ >= 0) ::close(fd_);
+        fd_ = -1;
+        if (pid_ > 0) {
+            kill(pid_, SIGTERM);
+            waitpid(pid_, nullptr, 0);
+        }
+        pid_ = -1;
+    }
+private:
+    int fd_ = -1;
+    pid_t pid_ = -1;
+};
+
+void notify(const std::string& msg) {
+    std::lock_guard<std::mutex> lk(g.mu);
+    g.error = msg;
+    ++g.error_seq;
+    wake_main();
+}
+
 bool apply(Source& src, const Settings& s, std::string& err) {
     if (!src.set_rate(s.rate)) { err = "sample rate not supported"; return false; }
     if (!src.set_freq(s.freq + s.offset)) { err = "frequency out of range"; return false; }
@@ -87,6 +154,18 @@ void worker(std::string spec) {
     Spectrum spectrum(kNfft);
     std::vector<cf32> block(kNfft);
     Settings cur;
+    std::unique_ptr<Demod> demod;
+    AudioSink sink;
+    std::vector<int16_t> pcm;
+    Mode demod_mode = Mode::Off;
+    double demod_rate = 0;
+    auto stop_audio = [&] {
+        demod.reset();
+        sink.close();
+        demod_mode = Mode::Off;
+        std::lock_guard<std::mutex> lk(g.mu);
+        g.audio_rate = 0;
+    };
     size_t since_frame = 0;
     int ffts = 0;
 
@@ -95,8 +174,12 @@ void worker(std::string spec) {
             std::unique_lock<std::mutex> lk(g.mu);
             if (g.stop) return;
             if (g.subscribers == 0) {
-                // Nobody watching: release the receiver and sleep.
+                // Nobody watching or listening: release the receiver and sleep.
                 src.reset();
+                demod.reset();
+                sink.close();
+                demod_mode = Mode::Off;
+                g.audio_rate = 0;
                 g.running = false;
                 g.cv.wait(lk, [] { return g.stop || g.subscribers > 0; });
                 continue;
@@ -134,12 +217,29 @@ void worker(std::string spec) {
             spectrum.take();   // drop samples from the old tuning
             since_frame = 0;
             ffts = 0;
+            // Retuning keeps the audio path; only a new mode or rate rebuilds it.
+            if (cur.mode != demod_mode || cur.rate != demod_rate) {
+                stop_audio();
+                if (cur.mode != Mode::Off && cur.rate >= 64e3) {
+                    demod = std::make_unique<Demod>(cur.mode, cur.rate);
+                    demod_mode = cur.mode;
+                    demod_rate = cur.rate;
+                    if (!sink.open(demod->audio_rate())) notify("audio output failed");
+                    std::lock_guard<std::mutex> lk(g.mu);
+                    g.audio_rate = demod->audio_rate();
+                }
+            }
         }
 
         if (src->read(block.data(), kNfft) != kNfft) {
             src.reset();
             report_error("receiver stopped");
             continue;
+        }
+        if (demod) {
+            pcm.clear();
+            demod->run(block.data(), kNfft, pcm);
+            if (!sink.write(pcm)) notify("audio output failed");
         }
         if (ffts < kMaxFftsPerFrame) { spectrum.add(block.data()); ++ffts; }
         since_frame += kNfft;
@@ -162,6 +262,7 @@ void worker(std::string spec) {
 struct Client {
     std::string in, out;
     size_t cols = 0;   // 0 = not subscribed to the spectrum
+    bool listening = false;   // asked for audio; it stops when this client leaves
 };
 
 void change_subscribers(int delta) {
@@ -224,13 +325,21 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
         c.cols = size_t(num);
         return "ok";
     }
+    if (cmd == "mode") {
+        Mode m;
+        if (!parse_mode(arg, m)) return "err mode needs off, wfm, nfm or am";
+        if ((m != Mode::Off) != c.listening) change_subscribers(c.listening ? -1 : +1);
+        c.listening = m != Mode::Off;
+        update([&](Settings& s) { s.mode = m; });
+        return "ok";
+    }
     if (cmd == "status") {
         std::lock_guard<std::mutex> lk(g.mu);
-        char buf[256];
-        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s fps=%d running=%d source=%s",
+        char buf[320];
+        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s fps=%d mode=%s audio_rate=%.0f running=%d source=%s",
                       g.want.freq, g.want.offset, g.want.rate,
                       g.want.gain ? std::to_string(*g.want.gain).c_str() : "auto", g.want.fps,
-                      g.running ? 1 : 0, spec.c_str());
+                      mode_name(g.want.mode), g.audio_rate, g.running ? 1 : 0, spec.c_str());
         std::string out = buf;
         if (!g.error.empty()) out += " error=" + g.error;
         return out;
@@ -248,14 +357,17 @@ void on_signal(int) {
 
 int main(int argc, char** argv) {
     std::string spec = "rtlsdr", path = default_socket_path();
+    if (const char* a = std::getenv("ZRF_AUDIO")) g_audio_spec = a;
     int idle_exit = 0;   // seconds with no client before exiting; 0 = stay
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--source" && i + 1 < argc) spec = argv[++i];
         else if (a == "--socket" && i + 1 < argc) path = argv[++i];
         else if (a == "--idle-exit" && i + 1 < argc) idle_exit = std::atoi(argv[++i]);
+        else if (a == "--audio" && i + 1 < argc) g_audio_spec = argv[++i];
         else {
-            std::fprintf(stderr, "usage: zrfd [--source sim|file:<path>|rtlsdr[:n]] [--socket <path>] [--idle-exit <seconds>]\n");
+            std::fprintf(stderr, "usage: zrfd [--source sim|file:<path>|rtlsdr[:n]] [--socket <path>] [--idle-exit <seconds>]\n"
+                                 "            [--audio none|file:<path>|cmd:<player command, %%r = sample rate>]\n");
             return a == "--help" ? 0 : 2;
         }
     }
@@ -314,9 +426,9 @@ int main(int argc, char** argv) {
                 if (g.error_seq != sent_error_seq) { error = g.error; sent_error_seq = g.error_seq; }
             }
             for (auto& [fd, c] : clients) {
-                if (!c.cols || c.out.size() > kMaxQueued) continue;
+                if ((!c.cols && !c.listening) || c.out.size() > kMaxQueued) continue;
                 if (!error.empty()) c.out += "E " + error + "\n";
-                if (frame.empty()) continue;
+                if (frame.empty() || !c.cols) continue;
                 std::vector<float> cols = reduce_peak(frame, c.cols);
                 std::vector<uint8_t> bytes(cols.size());
                 for (size_t i = 0; i < cols.size(); ++i) bytes[i] = db_to_byte(cols[i]);
@@ -354,8 +466,16 @@ int main(int argc, char** argv) {
         }
         for (int fd : dead) {
             if (clients[fd].cols) change_subscribers(-1);
+            bool was_listening = clients[fd].listening;
+            if (was_listening) change_subscribers(-1);
             close(fd);
             clients.erase(fd);
+            if (was_listening) {
+                // Audio belongs to the client that asked for it.
+                bool others = false;
+                for (auto& [other_fd, other] : clients) others = others || other.listening;
+                if (!others) update([](Settings& s) { s.mode = Mode::Off; });
+            }
             last_client = std::chrono::steady_clock::now();
         }
     }
