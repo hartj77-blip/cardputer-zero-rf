@@ -45,8 +45,14 @@ in the RF edition may depend on the motion sensors or the camera.** The base har
 shows `--` for a missing sensor instead of failing. On the Lite the edition hides Compass and turns
 the motion wake and face-down settings off; on the Full they come back with no RF code changes.
 
-To confirm: whether the Lite has the RX8130 clock chip (press coverage is unclear), and the battery
-size (base docs say 1750 mAh, launch coverage says 1500 mAh).
+Battery: M5Stack's own documentation lists 3.7 V, 1750 mAh (about 6.5 Wh) and gives one figure
+for both models. Launch press coverage in May 2026 said 1500 mAh. The Kickstarter page could not
+be read from here, so which cell actually ships is unconfirmed; the fuel gauge reports the design
+capacity, so the first unit settles it **(measure)**. At 1500 mAh the receiving estimate below
+drops by about a seventh.
+
+To confirm: whether the Lite has the RX8130 clock chip. M5's spec table lists it without splitting
+by model.
 
 ## The three hard limits
 
