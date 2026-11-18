@@ -4,10 +4,8 @@ A radio-focused edition of [ZeroOS](https://github.com/hartj77-blip/cardputer-ze
 M5Stack Cardputer Zero **Lite**, built around a USB software-defined radio (SDR) dongle. The first
 supported dongle is the RTL-SDR Blog V4.
 
-Status: the radio core in `rf/` (receiver backends, spectrum, daemon) is started and runs against a
-simulated receiver. Nothing has been tried on hardware. Items marked **(measure)** are estimates to confirm on
-a real unit with a real dongle; items marked **(decide)** need an owner decision and are collected
-at the end.
+Status: the radio core in `rf/` and the Spectrum app in `shell/` run against a simulated receiver.
+Nothing has been tried on hardware.
 
 ## Goal
 
@@ -113,24 +111,23 @@ Smaller limits to design around:
 
 ## Architecture
 
-### How it relates to the base OS (decide)
+### How it relates to the base OS
 
-Recommended: **layer on the base, don't fork it.** This repository pins `cardputer-zero` at a commit
-and adds only the RF parts, the same way the base pins M5Stack's image builder instead of forking
-it. Base fixes arrive by moving the pin.
+**Decided: layer on the base, don't fork it.** `base/` is `cardputer-zero` pinned as a git
+submodule, the same way the base pins M5Stack's image builder instead of forking it. Base fixes
+arrive by moving the pin.
 
-That needs three small additions to the base, each useful on its own:
+Today this needs no change to the base: `shell/CMakeLists.txt` compiles the base shell's sources
+as they are, leaves out its launcher list, and adds ours (`shell/src/registry.cpp`) plus the RF
+apps. The cost is that our build file mirrors the base's and our launcher list repeats the base's
+apps, so both need a look whenever the pin moves. Two small hooks in the base would remove that:
 
-1. **An edition hook for apps.** Let a build add apps to the launcher and choose their order,
-   instead of the fixed list in `shell/src/apps/registry.cpp`.
+1. **An edition hook for apps.** Let a build add apps to the launcher and choose their order.
 2. **An edition hook for the image.** Let `image/build.sh` take extra stage directories, extra
-   packages and an image name.
-3. **A way to launch a full-screen job that isn't the terminal**, or agreement that RF screens are
-   normal `zs::App` screens (the plan assumes the latter).
+   packages and an image name. The RF image build waits on this or on a wrapper script here.
 
-One catch: the base repository is private and this one is public. Continuous integration here
-can't fetch a private repository without a token, and a fork would publish the base code. Either
-the base goes public, this repository goes private, or CI gets a read token.
+The base repository is private and this one is public, so CI here needs a read token to build the
+shell (see the README).
 
 ### Pieces
 
@@ -230,8 +227,9 @@ after it can be developed and reviewed in the simulator first.
 
 ## Decisions needed
 
-1. **Structure:** layer on the base (recommended), fork it, or put the RF screens in the base itself.
-2. **Private or public:** the base is private and this repository is public; see Architecture.
+1. **Private or public:** the base is private and this repository is public. CI needs a token
+   until that changes.
+2. **Base hooks:** add the two small hooks to the base, or keep mirroring its build here.
 3. **Receive-only:** confirm transmit stays out of scope even for dongles that can.
 4. **Boot target:** boot to the normal launcher with RF apps first (recommended), or straight into
    Spectrum.

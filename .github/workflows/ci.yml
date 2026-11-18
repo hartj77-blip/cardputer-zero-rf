@@ -22,3 +22,46 @@ jobs:
           cmake --build build/rf -j
       - name: Test
         run: ctest --test-dir build/rf --output-on-failure
+
+  shell:
+    name: RF shell (build and screenshots)
+    runs-on: ubuntu-24.04
+    env:
+      BASE_REPO_TOKEN: ${{ secrets.BASE_REPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # The base OS is a private repository. Without a read token for it this
+      # job can only skip; see README.md.
+      - name: Fetch the base OS
+        id: base
+        run: |
+          if git submodule update --init --depth 1 base 2>/dev/null; then
+            echo "have=1" >> "$GITHUB_OUTPUT"
+          elif [ -n "$BASE_REPO_TOKEN" ]; then
+            auth=$(printf 'x-access-token:%s' "$BASE_REPO_TOKEN" | base64 -w0)
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
+              submodule update --init --depth 1 base
+            echo "have=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::BASE_REPO_TOKEN is not set, so the base OS can't be fetched. The RF shell was not built."
+            echo "have=0" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install dependencies
+        if: steps.base.outputs.have == '1'
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libsdl2-dev librtlsdr-dev python3-pil
+      - name: Build SDL simulator (compile check)
+        if: steps.base.outputs.have == '1'
+        run: cmake -S shell -B build/sim -DZS_BACKEND=sim && cmake --build build/sim -j"$(nproc)"
+      - name: Build headless
+        if: steps.base.outputs.have == '1'
+        run: cmake -S shell -B build/headless -DZS_BACKEND=headless && cmake --build build/headless -j"$(nproc)"
+      - name: Render the RF screens (fails if the app crashes)
+        if: steps.base.outputs.have == '1'
+        run: shell/tools/screenshots.sh build/headless build/screenshots
+      - uses: actions/upload-artifact@v4
+        if: steps.base.outputs.have == '1'
+        with:
+          name: screenshots
+          path: build/screenshots

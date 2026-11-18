@@ -30,6 +30,10 @@ else()
     message(STATUS "RTL-SDR support: off (librtlsdr not found); sim and file sources only")
 endif()
 
+# What a UI needs to talk to the daemon; no DSP, no receiver code.
+add_library(zrfclient STATIC src/client.cpp)
+target_include_directories(zrfclient PUBLIC src)
+
 add_executable(zrfd src/zrfd.cpp)
 target_link_libraries(zrfd zrfcore)
 

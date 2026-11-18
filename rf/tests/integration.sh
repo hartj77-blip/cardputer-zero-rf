@@ -56,4 +56,13 @@ sleep 0.3
 kill -TERM "$PID"; wait "$PID" || fail "daemon exited with an error"
 [ ! -e "$ZRFD_SOCKET" ] || fail "socket left behind"
 
+# Started with --idle-exit, the daemon leaves by itself once nobody is connected.
+"$BIN/zrfd" --source sim --idle-exit 1 &
+PID=$!
+for _ in $(seq 50); do [ -S "$ZRFD_SOCKET" ] && break; sleep 0.1; done
+"$BIN/zrf" send hello >/dev/null || fail "idle-exit daemon did not answer"
+for _ in $(seq 40); do kill -0 "$PID" 2>/dev/null || break; sleep 0.1; done
+kill -0 "$PID" 2>/dev/null && fail "daemon still running 4 s after its last client left"
+[ ! -e "$ZRFD_SOCKET" ] || fail "socket left behind after idle exit"
+
 echo "integration test passed"

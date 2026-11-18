@@ -5,6 +5,7 @@
 // dongle draws streaming power only when it is being watched.
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
@@ -247,12 +248,14 @@ void on_signal(int) {
 
 int main(int argc, char** argv) {
     std::string spec = "rtlsdr", path = default_socket_path();
+    int idle_exit = 0;   // seconds with no client before exiting; 0 = stay
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--source" && i + 1 < argc) spec = argv[++i];
         else if (a == "--socket" && i + 1 < argc) path = argv[++i];
+        else if (a == "--idle-exit" && i + 1 < argc) idle_exit = std::atoi(argv[++i]);
         else {
-            std::fprintf(stderr, "usage: zrfd [--source sim|file:<path>|rtlsdr[:n]] [--socket <path>]\n");
+            std::fprintf(stderr, "usage: zrfd [--source sim|file:<path>|rtlsdr[:n]] [--socket <path>] [--idle-exit <seconds>]\n");
             return a == "--help" ? 0 : 2;
         }
     }
@@ -280,13 +283,20 @@ int main(int argc, char** argv) {
     std::thread th(worker, spec);
     std::map<int, Client> clients;
     uint64_t sent_seq = 0, sent_error_seq = 0;
+    auto last_client = std::chrono::steady_clock::now();
 
     while (!g_quit) {
         std::vector<pollfd> fds;
         fds.push_back({lfd, POLLIN, 0});
         fds.push_back({g_wake[0], POLLIN, 0});
         for (auto& [fd, c] : clients) fds.push_back({fd, short(POLLIN | (c.out.empty() ? 0 : POLLOUT)), 0});
-        if (poll(fds.data(), nfds_t(fds.size()), -1) < 0 && errno != EINTR) break;
+        int timeout = -1;
+        if (idle_exit > 0 && clients.empty()) {
+            auto idle = std::chrono::steady_clock::now() - last_client;
+            if (idle >= std::chrono::seconds(idle_exit)) break;
+            timeout = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::seconds(idle_exit) - idle).count()) + 1;
+        }
+        if (poll(fds.data(), nfds_t(fds.size()), timeout) < 0 && errno != EINTR) break;
 
         if (fds[0].revents & POLLIN) {
             int fd;
@@ -346,6 +356,7 @@ int main(int argc, char** argv) {
             if (clients[fd].cols) change_subscribers(-1);
             close(fd);
             clients.erase(fd);
+            last_client = std::chrono::steady_clock::now();
         }
     }
 
