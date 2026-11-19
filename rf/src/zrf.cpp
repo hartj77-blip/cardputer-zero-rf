@@ -5,7 +5,10 @@
 //   zrf peak [cols]                strongest column of one spectrum frame
 //   zrf watch [cols]               live spectrum, one text line per frame
 //   zrf listen <wfm|nfm|am> [seconds]   play audio until stopped (or for N seconds)
+//   zrf record <file.cu8> [seconds]     save raw IQ at the current tuning
 //   zrf sensors [seconds]               print decoded sensor messages (rtl_433 JSON)
+//   zrf aircraft [seconds]              print raw ADS-B frames from aircraft
+//   zrf server [seconds]                serve the dongle on the network (rtl_tcp, port 1234)
 //   zrf snapshot <out.ppm> [cols] [rows]   spectrum + waterfall picture
 #include <algorithm>
 #include <cstdio>
@@ -137,8 +140,9 @@ int usage() {
                  "usage: zrf [--socket <path>] send <command...>\n"
                  "       zrf [--socket <path>] peak [cols]\n"
                  "       zrf [--socket <path>] watch [cols]\n"
+                 "       zrf [--socket <path>] record <file.cu8> [seconds]\n"
                  "       zrf [--socket <path>] listen <wfm|nfm|am> [seconds]\n"
-                 "       zrf [--socket <path>] sensors [seconds]\n"
+                 "       zrf [--socket <path>] sensors|aircraft|server [seconds]\n"
                  "       zrf [--socket <path>] snapshot <out.ppm> [cols] [rows]\n");
     return 2;
 }
@@ -194,6 +198,16 @@ int main(int argc, char** argv) {
         }
         return 1;
     }
+    if (cmd == "record") {
+        if (i >= argc) return usage();
+        std::string path = argv[i++], reply, line;
+        int seconds = int_arg(0);
+        if (!send_line("record " + path) || !read_line(reply)) return 1;
+        if (reply.rfind("ok", 0) != 0) { std::fprintf(stderr, "zrf: %s\n", reply.c_str()); return 1; }
+        for (int waited = 0; seconds == 0 || waited < seconds * 10; ++waited)
+            if (read_line(line, 100) && line.rfind("E ", 0) == 0) { std::fprintf(stderr, "zrf: %s\n", line.c_str() + 2); return 1; }
+        return 0;
+    }
     if (cmd == "listen") {
         if (i >= argc) return usage();
         std::string mode = argv[i++], reply;
@@ -206,10 +220,10 @@ int main(int argc, char** argv) {
             if (read_line(line, 100) && line.rfind("E ", 0) == 0) std::fprintf(stderr, "zrf: %s\n", line.c_str() + 2);
         return 0;
     }
-    if (cmd == "sensors") {
+    if (cmd == "sensors" || cmd == "aircraft" || cmd == "server") {
         int seconds = int_arg(0);
         std::string reply, line;
-        if (!send_line("decode sensors") || !read_line(reply)) return 1;
+        if (!send_line("decode " + cmd) || !read_line(reply)) return 1;
         if (reply.rfind("ok", 0) != 0) { std::fprintf(stderr, "zrf: %s\n", reply.c_str()); return 1; }
         for (int waited = 0; seconds == 0 || waited < seconds * 10; ++waited) {
             if (!read_line(line, 100)) continue;

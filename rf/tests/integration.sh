@@ -69,12 +69,35 @@ bytes=$(stat -c %s "$DIR/audio.raw")
 "$BIN/zrf" send squelch off >/dev/null
 "$BIN/zrf" send squelch loud >/dev/null && fail "accepted a bad squelch level"
 
+# An IQ recording has the right size and description, and plays back with the
+# signal where it was.
+"$BIN/zrf" send tune 98300000 >/dev/null
+"$BIN/zrf" record "$DIR/fm station.cu8" 2
+sleep 0.3
+bytes=$(stat -c %s "$DIR/fm station.cu8")
+[ "$bytes" -ge 3000000 ] && [ "$bytes" -le 5000000 ] || fail "2 s at 1.024 MS/s should be about 4 MB, got $bytes"
+grep -q '"core:frequency": 98300000' "$DIR/fm station.sigmf-meta" || fail "recording description missing or wrong"
+[ "$("$BIN/zrf" send status | field recorded)" = 0 ] || fail "still recording after the client left"
+"$BIN/zrfd" --source "file:$DIR/fm station.cu8" --socket "$DIR/play.sock" &
+PLAY=$!
+for _ in $(seq 50); do [ -S "$DIR/play.sock" ] && break; sleep 0.1; done
+col=$("$BIN/zrf" --socket "$DIR/play.sock" peak 320 | field col)
+kill "$PLAY"; wait "$PLAY" || true
+[ "$col" -ge 140 ] && [ "$col" -le 180 ] || fail "recording plays back with its peak at column $col, expected near 160"
+"$BIN/zrf" send record relative/path.cu8 >/dev/null && fail "accepted a relative recording path"
+
 # The sensor decoder's output reaches the client, and stops when it leaves.
 out=$("$BIN/zrf" sensors 2)
 echo "$out" | grep -q '"model":"Acurite-Tower"' || fail "no decoded sensor messages: $out"
 sleep 0.3
 [ "$("$BIN/zrf" send status | field decode)" = off ] || fail "still decoding after the client left"
-pgrep -P "$PID" >/dev/null && fail "decoder program left running"   # our daemon's children only
+pgrep -P "$PID" >/dev/null && fail "decoder program left running"
+# Aircraft frames come through the same way, one job replacing another.
+out=$("$BIN/zrf" aircraft 3)
+[ "$(echo "$out" | grep -c '^\*8D[0-9A-F]\{26\};$')" -ge 5 ] || fail "no aircraft frames: $out"
+sleep 0.3
+pgrep -P "$PID" >/dev/null && fail "aircraft program left running"
+"$BIN/zrf" send decode submarines >/dev/null && fail "accepted an unknown decoder"   # our daemon's children only
 # The spectrum comes back afterwards.
 "$BIN/zrf" send tune 98300000 >/dev/null
 "$BIN/zrf" peak 320 >/dev/null || fail "no spectrum after decoding"

@@ -15,7 +15,7 @@ if [ "${1:-}" = "--uninstall" ]; then
         mv /usr/bin/zeroshell.base /usr/bin/zeroshell
         systemctl restart zeroshell.service || true
     fi
-    rm -f /usr/local/bin/zrfd /usr/local/bin/zrf /usr/local/bin/zrf-sim-sensors /usr/local/bin/zeroshell-rf \
+    rm -f /usr/local/bin/zrfd /usr/local/bin/zrf /usr/local/bin/zrf-sim-sensors /usr/local/bin/zrf-sim-aircraft /usr/local/bin/zeroshell-rf \
           /usr/local/bin/zeroos-rf-bringup /etc/udev/rules.d/60-zeroos-rf.rules /etc/modprobe.d/zeroos-rf-blacklist.conf
     echo "ZeroOS RF removed. Packages (rtl-sdr, rtl-433, sox) were left installed."
     exit 0
@@ -34,7 +34,7 @@ modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
 udevadm control --reload-rules && udevadm trigger || true
 
 echo "== Programs"
-for f in zrfd zrf zrf-sim-sensors; do
+for f in zrfd zrf zrf-sim-sensors zrf-sim-aircraft; do
     [ -f "$HERE/bin/$f" ] && install -m 0755 "$HERE/bin/$f" /usr/local/bin/$f
 done
 install -m 0755 "$HERE/bringup.sh" /usr/local/bin/zeroos-rf-bringup

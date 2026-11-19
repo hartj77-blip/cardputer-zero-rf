@@ -145,7 +145,7 @@ private:
         }
         if (ev.has_error) {
             if (ev.error == "no dongle") set_message("No radio found.\nPlug in an SDR dongle.");
-            else if (ev.error == "rtl_433 is not installed") set_message("The sensor decoder (rtl_433)\nis not installed.");
+            else if (ev.error == "program not installed") set_message("The sensor decoder (rtl_433)\nis not installed.");
             else if (devices_.empty()) set_message(("Radio: " + ev.error).c_str());
         }
         for (auto& line : ev.decoded) add_message(line);

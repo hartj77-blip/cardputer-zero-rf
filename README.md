@@ -10,7 +10,7 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 | Part | Status |
 | --- | --- |
 | `rf/` radio core: receiver backends, spectrum, FM and AM demodulation, the radio daemon `zrfd` and its protocol | Working against a simulated receiver and recorded files. Never run on a real dongle; audio checked by measurement, never by ear. |
-| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum** and **Sensors** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
+| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **SDR Server** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
 | `device/` the kit for a real unit: installer and first-run check | Dry-run against the simulated radio only. See [docs/BRINGUP.md](docs/BRINGUP.md). |
 | `base/` the base OS, [cardputer-zero](https://github.com/hartj77-blip/cardputer-zero), pinned as a submodule | Unchanged; we build on it, we don't fork it |
 | Image (SD card) build with the SDR packages | Not started |
@@ -18,9 +18,32 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 ## Spectrum
 
 Left/Right tune by one step, Up/Down change the step size, **Z**/**X** narrow or widen the view,
-**G** cycles gain, **P** toggles peak hold, **C** centres on the strongest signal. **M** cycles
-listening: off, broadcast FM, narrow FM, AM. Type a frequency in MHz and press **Enter** to jump
-to it. Audio stops when you leave the app.
+**G** cycles gain, **P** toggles peak hold, **C** centres on the strongest signal. Type a frequency
+in MHz and press **Enter** to jump to it, or press **B** for a list of bands.
+
+**M** cycles listening: off, broadcast FM, narrow FM, AM, upper and lower sideband (after choosing
+a band, the first press picks the mode that suits it). **S** toggles squelch. **R** records raw IQ
+to `~/Recordings` (about 2 MB a second at the default width; it stops by itself before the card
+fills, and when you retune). Audio and recording stop when you leave the app.
+
+## Scanner
+
+Sweeps a band, stops on the first channel with a signal, plays it until it goes quiet, then carries
+on, keeping a log of what it heard. **Left**/**Right** change band (airband, weather radio, marine,
+amateur, FRS/GMRS, PMR446, CB, broadcast FM), **Space** skips the current channel, **H** holds on
+it, **L** locks it out, **C** clears the log and lockouts.
+
+## Aircraft
+
+ADS-B reports from aircraft overhead on 1090 MHz: flight, altitude, speed, heading with a climb
+or descent arrow, and position. Decoding is our own, from the raw frames `rtl_adsb` prints, or
+`dump1090-mutability` when that is installed (it hears more).
+
+## SDR Server
+
+Lends the dongle to an SDR program on another computer or phone (SDR++, GQRX, SDR#) over Wi-Fi or
+Tailscale, using `rtl_tcp` on port 1234. The screen shows the address to enter. While it is on,
+anyone on the same network can tune the radio; it stops when you leave the app.
 
 ## Sensors
 

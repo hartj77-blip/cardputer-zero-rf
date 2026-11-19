@@ -3,16 +3,20 @@
 // Left/Right tune by one step, Up/Down change the step, Z/X narrow or widen
 // the view, G cycles gain, P toggles peak hold, C centres on the strongest
 // signal, M cycles listening (off, broadcast FM, narrow FM, AM, upper and
-// lower sideband), S toggles squelch, B opens the band list. Type a frequency
-// in MHz and press Enter to jump to it. Audio stops on leaving.
+// lower sideband), S toggles squelch, B opens the band list, R records raw
+// IQ to ~/Recordings. Type a frequency in MHz and press Enter to jump to it.
+// Audio and recording stop on leaving.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <vector>
 
 #include "apps/common.h"
+#include <sys/stat.h>
+
 #include "apps/bands.h"
 #include "apps/radio_link.h"
 
@@ -147,6 +151,7 @@ public:
             shell_toast(squelch_ ? "Squelch on" : "Squelch off");
             break;
         case 'b': case 'B': show_bands(true); return true;
+        case 'r': case 'R': toggle_record(); break;
         case LV_KEY_ENTER: return true;   // nothing to confirm; keep it from the hidden list
         case 'p': case 'P':
             peak_hold_ = !peak_hold_;
@@ -199,7 +204,13 @@ private:
         auto& frames = ev.frames;
         if (ev.has_error && ev.error != error_) {
             error_ = ev.error;
-            if (error_ == "audio output failed") shell_toast("No audio output");
+            if (error_.rfind("recording stopped", 0) == 0 || error_ == "can't write the recording") {
+                recording_ = false;
+                shell_toast(error_ == "recording stopped: storage full" ? "Recording stopped: storage full"
+                            : error_ == "recording stopped: retuned" ? "Recording stopped (retuned)" : "Can't write the recording");
+                update_labels();
+                error_.clear();
+            } else if (error_ == "audio output failed") shell_toast("No audio output");
             else if (error_ == "no dongle") set_message("No radio found.\nPlug in an SDR dongle.");
             else if (!error_.empty()) set_message(("Radio: " + error_).c_str());
         }
@@ -236,6 +247,26 @@ private:
         shift_columns(kW);   // the old picture is at the wrong scale: clear it
         client_.send(fmt("rate %.0f", kSpans[span_]));
         lv_obj_invalidate(canvas_);
+    }
+
+    void toggle_record() {
+        if (recording_) {
+            recording_ = false;
+            client_.send("record off");
+            shell_toast("Saved " + record_name_);
+            return;
+        }
+        std::string dir = home_dir() + "/Recordings";
+        mkdir(dir.c_str(), 0755);
+        char when[32];
+        time_t t = time(nullptr);
+        tm lt{};
+        localtime_r(&t, &lt);
+        strftime(when, sizeof when, "%Y%m%d-%H%M%S", &lt);
+        record_name_ = fmt("iq_%.4fMHz_%s.cu8", freq_ / 1e6, when);
+        client_.send("record " + dir + "/" + record_name_);
+        recording_ = true;
+        shell_toast(fmt("Recording, %.1f MB a second", kSpans[span_] * 2 / 1e6));
     }
 
     void send_squelch() {
@@ -345,6 +376,7 @@ private:
         std::string info = fmt("step %s", hz_text(kSteps[step_]).c_str());
         if (mode_) info += fmt("  " LV_SYMBOL_VOLUME_MAX " %s%s", kModeNames[mode_], squelch_ ? " SQ" : "");
         else info += fmt("  gain %s", gain.c_str());
+        if (recording_) info = LV_SYMBOL_SAVE " REC  " + info;
         lv_label_set_text(info_label_, info.c_str());
         double half = kSpans[span_] / 2;
         lv_label_set_text(low_label_, fmt("%.3f", (freq_ - half) / 1e6).c_str());
@@ -363,7 +395,8 @@ private:
     float floor_ = -1;
     double freq_ = 98.3e6;
     int step_ = 3, span_ = 1, gain_ = 0, mode_ = 0, band_mode_ = 0;
-    bool squelch_ = false, bands_open_ = false;
+    bool squelch_ = false, bands_open_ = false, recording_ = false;
+    std::string record_name_;
     lv_obj_t* band_list_ = nullptr;
     bool peak_hold_ = false;
     std::string entry_, error_;
