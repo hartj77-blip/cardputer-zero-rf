@@ -3,6 +3,7 @@
 //
 // The receiver is only open while someone is subscribed to its output, so a
 // dongle draws streaming power only when it is being watched.
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -10,6 +11,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -19,6 +21,7 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -43,7 +46,9 @@ struct Settings {
     std::optional<double> gain;   // nullopt = automatic
     int fps = 15;
     Mode mode = Mode::Off;        // listening: demodulate the tuned frequency to audio
-    bool sensors = false;         // hand the receiver to the sensor decoder (rtl_433)
+    std::optional<double> squelch;   // mute audio unless the signal is this many dB above the noise
+    std::string record;           // file to write raw IQ to; "" = not recording
+    std::string tool;             // hand the receiver to another program: "sensors", "aircraft", "server"; "" = none
 };
 
 struct Shared {
@@ -62,6 +67,9 @@ struct Shared {
     bool running = false;
     double audio_rate = 0;    // 0 when not listening
     std::vector<std::string> decoded;   // decoder output lines not yet sent to clients
+    double recorded_bytes = 0;
+    double signal_db = 0;     // tuned signal above the noise floor, from the last frame
+    bool squelch_open = true;
 };
 
 Shared g;
@@ -223,22 +231,104 @@ std::string shell_quote(const std::string& s) {
     return out + "'";
 }
 
-// The sensor decoder for this kind of receiver. rtl_433 opens the dongle
-// itself, which is why ours must be closed first.
-std::string sensors_command(const std::string& spec, double freq) {
-    if (const char* c = std::getenv("ZRF_SENSORS_CMD")) return c;
-    const std::string opts = " -F json -M level -C si 2>/dev/null";
-    if (spec == "sim") {
-        char self[512];
-        ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
-        std::string dir = n > 0 ? std::string(self, size_t(n)) : "";
-        dir = dir.substr(0, dir.rfind('/') + 1);
-        return "exec " + shell_quote(dir + "zrf-sim-sensors");
+// The outside program for a job on this kind of receiver. Each opens the
+// dongle itself, which is why ours must be closed first. "" = not possible.
+std::string tool_command(const std::string& spec, const std::string& tool, double freq) {
+    std::string env = "ZRF_" + tool + "_CMD";
+    for (char& c : env) c = char(std::toupper(static_cast<unsigned char>(c)));
+    if (const char* c = std::getenv(env.c_str())) return c;
+
+    bool sim = spec == "sim", file = spec.rfind("file:", 0) == 0;
+    std::string index = !sim && !file && spec.size() > 7 ? std::to_string(std::atoi(spec.c_str() + 7)) : "0";
+    char self[512];
+    ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
+    std::string dir = n > 0 ? std::string(self, size_t(n)) : "";
+    dir = dir.substr(0, dir.rfind('/') + 1);
+
+    if (tool == "sensors") {
+        // Weather stations, tyre sensors, remotes: rtl_433, JSON lines out.
+        const std::string opts = " -F json -M level -C si 2>/dev/null";
+        if (sim) return "exec " + shell_quote(dir + "zrf-sim-sensors");
+        if (file) return "exec rtl_433 -r " + shell_quote(spec.substr(5)) + opts;
+        return "exec rtl_433 -d " + index + " -f " + std::to_string(std::llround(freq)) + opts;
     }
-    if (spec.rfind("file:", 0) == 0) return "exec rtl_433 -r " + shell_quote(spec.substr(5)) + opts;
-    std::string index = spec.size() > 7 ? std::to_string(std::atoi(spec.c_str() + 7)) : "0";
-    return "exec rtl_433 -d " + index + " -f " + std::to_string(std::llround(freq)) + opts;
+    if (tool == "aircraft") {
+        // ADS-B at 1090 MHz, raw frames out. dump1090 hears more when it is
+        // installed; rtl_adsb comes with the rtl-sdr tools.
+        if (sim) return "exec " + shell_quote(dir + "zrf-sim-aircraft");
+        if (file) return "";
+        return "if command -v dump1090-mutability >/dev/null; then exec dump1090-mutability --device-index " + index +
+               " --raw 2>/dev/null; else exec rtl_adsb -d " + index + " 2>/dev/null; fi";
+    }
+    if (tool == "server") {
+        // Serve the dongle to SDR programs on other machines.
+        if (sim) return "echo 'simulated server: nothing is listening'; exec sleep 86400";
+        if (file) return "";
+        return "exec rtl_tcp -a 0.0.0.0 -p 1234 -d " + index + " 2>&1";
+    }
+    return "";
 }
+
+// Raw IQ to a file, as unsigned 8-bit pairs (the format rtl_sdr writes and
+// most tools read), with a small SigMF description next to it.
+class Recorder {
+public:
+    ~Recorder() { close(); }
+    bool active() const { return f_ != nullptr; }
+    const std::string& path() const { return path_; }
+    double bytes() const { return bytes_; }
+    bool open(const std::string& path, double freq, double rate) {
+        close();
+        f_ = std::fopen(path.c_str(), "wb");
+        if (!f_) return false;
+        path_ = path;
+        bytes_ = 0;
+        size_t slash = path.rfind('/'), dot = path.rfind('.');
+        std::string base = dot != std::string::npos && (slash == std::string::npos || dot > slash) ? path.substr(0, dot) : path;
+        std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+        if (FILE* m = std::fopen((base + ".sigmf-meta").c_str(), "w")) {
+            char when[32];
+            time_t t = time(nullptr);
+            strftime(when, sizeof when, "%Y-%m-%dT%H:%M:%SZ", gmtime(&t));
+            std::fprintf(m,
+                         "{\n  \"global\": {\"core:datatype\": \"cu8\", \"core:sample_rate\": %.0f, "
+                         "\"core:version\": \"1.0.0\", \"core:dataset\": \"%s\", \"core:recorder\": \"zrfd\"},\n"
+                         "  \"captures\": [{\"core:sample_start\": 0, \"core:frequency\": %.0f, \"core:datetime\": \"%s\"}],\n"
+                         "  \"annotations\": []\n}\n",
+                         rate, name.c_str(), freq, when);
+            std::fclose(m);
+        }
+        return true;
+    }
+    // False when writing failed or the disk is nearly full; the file is closed.
+    bool write(const cf32* in, size_t n) {
+        buf_.resize(n * 2);
+        for (size_t i = 0; i < n; ++i) {
+            buf_[2 * i] = uint8_t(std::clamp(std::lround(in[i].real() * 127.5f + 127.5f), 0L, 255L));
+            buf_[2 * i + 1] = uint8_t(std::clamp(std::lround(in[i].imag() * 127.5f + 127.5f), 0L, 255L));
+        }
+        bool ok = std::fwrite(buf_.data(), 1, buf_.size(), f_) == buf_.size();
+        bytes_ += double(buf_.size());
+        // Check free space about once a second's worth of data.
+        if (ok && (since_check_ += buf_.size()) > 2000000) {
+            since_check_ = 0;
+            struct statvfs v {};
+            if (statvfs(path_.c_str(), &v) == 0 && double(v.f_bavail) * double(v.f_frsize) < 200e6) ok = false;
+        }
+        if (!ok) close();
+        return ok;
+    }
+    void close() {
+        if (f_) std::fclose(f_);
+        f_ = nullptr;
+    }
+private:
+    FILE* f_ = nullptr;
+    std::string path_;
+    std::vector<uint8_t> buf_;
+    double bytes_ = 0;
+    size_t since_check_ = 0;
+};
 
 bool apply(Source& src, const Settings& s, std::string& err) {
     if (!src.set_rate(s.rate)) { err = "sample rate not supported"; return false; }
@@ -266,8 +356,14 @@ void worker(std::string spec) {
     };
     size_t since_frame = 0;
     int ffts = 0;
+    std::vector<float> sorted;
+    bool squelch_open = true;
+    int frames_below = 5;
+    Recorder recorder;
     Decoder decoder;
     double decoder_freq = 0;
+    std::string decoder_tool;
+    double rec_freq = 0, rec_rate = 0;
     std::vector<std::string> lines;
 
     for (;;) {
@@ -277,6 +373,8 @@ void worker(std::string spec) {
             if (g.subscribers == 0) {
                 // Nobody watching or listening: release the receiver and sleep.
                 src.reset();
+                recorder.close();
+                g.recorded_bytes = 0;
                 demod.reset();
                 sink.close();
                 demod_mode = Mode::Off;
@@ -289,24 +387,27 @@ void worker(std::string spec) {
                 continue;
             }
         }
-        bool want_sensors;
+        std::string want_tool;
         double want_freq;
         {
             std::lock_guard<std::mutex> lk(g.mu);
-            want_sensors = g.want.sensors;
-            want_freq = g.want.freq;
+            want_tool = g.want.tool;
+            // Only the sensor decoder follows the tuned frequency.
+            want_freq = want_tool == "sensors" ? g.want.freq : 0;
         }
-        if (want_sensors) {
-            // The decoder needs the receiver to itself.
-            if (src) { src.reset(); stop_audio(); }
-            if (!decoder.running() || decoder_freq != want_freq) {
-                if (!decoder.start(sensors_command(spec, want_freq))) {
-                    report_error("can't start the decoder");
+        if (!want_tool.empty()) {
+            // The other program needs the receiver to itself.
+            if (src) { src.reset(); stop_audio(); recorder.close(); }
+            if (!decoder.running() || decoder_freq != want_freq || decoder_tool != want_tool) {
+                std::string cmd = tool_command(spec, want_tool, want_freq);
+                if (cmd.empty() || !decoder.start(cmd)) {
+                    report_error(cmd.empty() ? "not available with this receiver" : "can't start the program");
                     std::unique_lock<std::mutex> lk(g.mu);
-                    g.cv.wait_for(lk, std::chrono::seconds(2), [] { return g.stop || g.subscribers == 0; });
+                    g.cv.wait_for(lk, std::chrono::seconds(2), [&] { return g.stop || g.subscribers == 0 || g.want.tool != want_tool; });
                     continue;
                 }
                 decoder_freq = want_freq;
+                decoder_tool = want_tool;
                 std::lock_guard<std::mutex> lk(g.mu);
                 g.running = true;
                 g.error.clear();
@@ -322,11 +423,11 @@ void worker(std::string spec) {
             if (!alive) {
                 double ran = decoder.seconds_running();
                 int code = decoder.stop();
-                // rtl_433 gives up at once when it finds no dongle.
+                // These programs give up at once when they find no dongle.
                 bool dongle = spec.rfind("rtlsdr", 0) == 0;
-                report_error(code == 127 ? "rtl_433 is not installed" : dongle && ran < 5 ? "no dongle" : "decoder stopped");
+                report_error(code == 127 ? "program not installed" : dongle && ran < 5 ? "no dongle" : "program stopped");
                 std::unique_lock<std::mutex> lk(g.mu);
-                g.cv.wait_for(lk, std::chrono::seconds(2), [] { return g.stop || g.subscribers == 0 || !g.want.sensors; });
+                g.cv.wait_for(lk, std::chrono::seconds(2), [&] { return g.stop || g.subscribers == 0 || g.want.tool != want_tool; });
             }
             continue;
         }
@@ -367,6 +468,31 @@ void worker(std::string spec) {
             spectrum.take();   // drop samples from the old tuning
             since_frame = 0;
             ffts = 0;
+            // A recording is one frequency and rate: retuning ends it, and a
+            // new path starts one.
+            if (recorder.active() && (cur.record != recorder.path() || cur.freq != rec_freq || cur.rate != rec_rate)) {
+                recorder.close();
+                if (cur.record == recorder.path()) {
+                    notify("recording stopped: retuned");
+                    std::lock_guard<std::mutex> lk(g.mu);
+                    g.want.record.clear();
+                    cur.record.clear();
+                }
+            }
+            if (!cur.record.empty() && !recorder.active()) {
+                if (recorder.open(cur.record, cur.freq, cur.rate)) {
+                    rec_freq = cur.freq;
+                    rec_rate = cur.rate;
+                } else {
+                    notify("can't write the recording");
+                    std::lock_guard<std::mutex> lk(g.mu);
+                    g.want.record.clear();
+                    cur.record.clear();
+                }
+            }
+            // With squelch on, stay muted until a frame shows a signal here.
+            frames_below = 5;
+            squelch_open = !cur.squelch;
             // Retuning keeps the audio path; only a new mode or rate rebuilds it.
             if (cur.mode != demod_mode || cur.rate != demod_rate) {
                 stop_audio();
@@ -389,7 +515,14 @@ void worker(std::string spec) {
         if (demod) {
             pcm.clear();
             demod->run(block.data(), kNfft, pcm);
+            if (cur.squelch && !squelch_open) std::fill(pcm.begin(), pcm.end(), int16_t(0));
             if (!sink.write(pcm)) notify("audio output failed");
+        }
+        if (recorder.active() && !recorder.write(block.data(), kNfft)) {
+            notify("recording stopped: storage full");
+            std::lock_guard<std::mutex> lk(g.mu);
+            g.want.record.clear();
+            cur.record.clear();
         }
         if (ffts < kMaxFftsPerFrame) { spectrum.add(block.data()); ++ffts; }
         since_frame += kNfft;
@@ -397,7 +530,23 @@ void worker(std::string spec) {
             std::vector<float> frame = spectrum.take();
             since_frame = 0;
             ffts = 0;
+            // Signal strength at the tuned frequency, against the noise floor
+            // (the median of the whole view). Drives the squelch.
+            double half_width = cur.mode == Mode::Wfm ? 100e3 : cur.mode == Mode::Nfm ? 8e3 : cur.mode == Mode::Am ? 5e3 : 3e3;
+            long w = std::max(1L, std::lround(half_width / (cur.rate / kNfft)));
+            long lo = std::max(0L, long(kNfft / 2) - w), hi = std::min(long(kNfft) - 1, long(kNfft / 2) + w);
+            float peak = *std::max_element(frame.begin() + lo, frame.begin() + hi + 1);
+            sorted = frame;
+            std::nth_element(sorted.begin(), sorted.begin() + kNfft / 2, sorted.end());
+            double signal = peak - sorted[kNfft / 2];
+            if (cur.squelch && signal >= *cur.squelch) frames_below = 0;
+            else ++frames_below;
+            // Stay open through short dips (about a third of a second).
+            squelch_open = !cur.squelch || frames_below < 5;
             std::lock_guard<std::mutex> lk(g.mu);
+            g.signal_db = signal;
+            g.recorded_bytes = recorder.active() ? recorder.bytes() : 0;
+            g.squelch_open = squelch_open;
             g.frame = std::move(frame);
             g.frame_freq = cur.freq;
             g.frame_rate = cur.rate;
@@ -414,6 +563,7 @@ struct Client {
     size_t cols = 0;   // 0 = not subscribed to the spectrum
     bool listening = false;   // asked for audio; it stops when this client leaves
     bool decoding = false;    // asked for decoder output; same rule
+    bool recording = false;   // asked for an IQ recording; same rule
 };
 
 void change_subscribers(int delta) {
@@ -478,27 +628,47 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
     }
     if (cmd == "mode") {
         Mode m;
-        if (!parse_mode(arg, m)) return "err mode needs off, wfm, nfm or am";
+        if (!parse_mode(arg, m)) return "err mode needs off, wfm, nfm, am, usb or lsb";
         if ((m != Mode::Off) != c.listening) change_subscribers(c.listening ? -1 : +1);
         c.listening = m != Mode::Off;
         update([&](Settings& s) { s.mode = m; });
         return "ok";
     }
+    if (cmd == "record") {
+        // The rest of the line is the path, which may contain spaces.
+        std::string path = line.size() > 7 ? line.substr(7) : "";
+        if (path.empty()) return "err record needs a file path or off";
+        bool on = path != "off";
+        if (on && path[0] != '/') return "err record needs an absolute path";
+        if (on != c.recording) change_subscribers(c.recording ? -1 : +1);
+        c.recording = on;
+        update([&](Settings& s) { s.record = on ? path : ""; });
+        return "ok";
+    }
+    if (cmd == "squelch") {
+        if (arg == "off") { update([](Settings& s) { s.squelch.reset(); }); return "ok"; }
+        if (!is_num || num < 0 || num > 100) return "err squelch needs dB above the noise (0..100) or off";
+        update([&](Settings& s) { s.squelch = num; });
+        return "ok";
+    }
     if (cmd == "decode") {
-        if (arg != "sensors" && arg != "off") return "err decode needs sensors or off";
-        bool on = arg == "sensors";
+        if (arg != "sensors" && arg != "aircraft" && arg != "server" && arg != "off")
+            return "err decode needs sensors, aircraft, server or off";
+        bool on = arg != "off";
         if (on != c.decoding) change_subscribers(c.decoding ? -1 : +1);
         c.decoding = on;
-        update([&](Settings& s) { s.sensors = on; });
+        update([&](Settings& s) { s.tool = on ? arg : ""; });
         return "ok";
     }
     if (cmd == "status") {
         std::lock_guard<std::mutex> lk(g.mu);
-        char buf[320];
-        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s fps=%d mode=%s audio_rate=%.0f decode=%s running=%d source=%s",
+        char buf[480];
+        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s fps=%d mode=%s audio_rate=%.0f squelch=%s signal=%.1f open=%d decode=%s recorded=%.0f running=%d source=%s",
                       g.want.freq, g.want.offset, g.want.rate,
                       g.want.gain ? std::to_string(*g.want.gain).c_str() : "auto", g.want.fps,
-                      mode_name(g.want.mode), g.audio_rate, g.want.sensors ? "sensors" : "off", g.running ? 1 : 0, spec.c_str());
+                      mode_name(g.want.mode), g.audio_rate,
+                      g.want.squelch ? std::to_string(int(*g.want.squelch)).c_str() : "off", g.signal_db,
+                      g.squelch_open ? 1 : 0, g.want.tool.empty() ? "off" : g.want.tool.c_str(), g.recorded_bytes, g.running ? 1 : 0, spec.c_str());
         std::string out = buf;
         if (!g.error.empty()) out += " error=" + g.error;
         return out;
@@ -587,7 +757,7 @@ int main(int argc, char** argv) {
                 if (g.error_seq != sent_error_seq) { error = g.error; sent_error_seq = g.error_seq; }
             }
             for (auto& [fd, c] : clients) {
-                if ((!c.cols && !c.listening && !c.decoding) || c.out.size() > kMaxQueued) continue;
+                if ((!c.cols && !c.listening && !c.decoding && !c.recording) || c.out.size() > kMaxQueued) continue;
                 if (!error.empty()) c.out += "E " + error + "\n";
                 if (c.decoding)
                     for (auto& l : decoded) c.out += "D " + l + "\n";
@@ -630,6 +800,10 @@ int main(int argc, char** argv) {
         for (int fd : dead) {
             if (clients[fd].cols) change_subscribers(-1);
             bool was_listening = clients[fd].listening, was_decoding = clients[fd].decoding;
+            if (clients[fd].recording) {
+                change_subscribers(-1);
+                update([](Settings& s) { s.record.clear(); });
+            }
             if (was_listening) change_subscribers(-1);
             if (was_decoding) change_subscribers(-1);
             close(fd);
@@ -643,7 +817,7 @@ int main(int argc, char** argv) {
             if (was_decoding) {
                 bool others = false;
                 for (auto& [other_fd, other] : clients) others = others || other.decoding;
-                if (!others) update([](Settings& s) { s.sensors = false; });
+                if (!others) update([](Settings& s) { s.tool.clear(); });
             }
             last_client = std::chrono::steady_clock::now();
         }

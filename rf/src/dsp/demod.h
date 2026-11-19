@@ -11,9 +11,10 @@ namespace zrf {
 
 using cf32 = std::complex<float>;
 
-enum class Mode { Off, Wfm, Nfm, Am };
+enum class Mode { Off, Wfm, Nfm, Am, Usb, Lsb };
 
-// "off", "wfm" (broadcast FM), "nfm" (narrow FM), "am". False if unknown.
+// "off", "wfm" (broadcast FM), "nfm" (narrow FM), "am", "usb", "lsb"
+// (upper and lower sideband). False if unknown.
 bool parse_mode(const std::string& s, Mode& out);
 const char* mode_name(Mode m);
 
@@ -47,6 +48,13 @@ private:
     std::vector<float> disc_buf_, audio_buf_;
     cf32 prev_{1, 0};
     float fm_gain_, deemph_a_, deemph_y_ = 0, am_level_ = 0;
+    // Sideband, at the audio rate: shift the wanted 3 kHz to the middle,
+    // filter sharply (the other sideband is 400 Hz away), shift it back.
+    FirDecim<cf32> sideband_;
+    cf32 pre_{1, 0}, pre_step_{1, 0}, post_{1, 0}, post_step_{1, 0};
+    std::vector<cf32> mix_buf_, side_buf_;
+    float ssb_level_ = 0;
+    int renorm_ = 0;
 };
 
 }  // namespace zrf

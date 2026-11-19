@@ -8,7 +8,8 @@ the base OS, so it builds and runs on any Linux PC.
 | `zrfd` | The radio daemon. The one process that owns the receiver. Tunes it, computes the spectrum and serves clients over a Unix socket. |
 | `zrf` | A command-line client for scripts, tests and trying things out. |
 | `src/sdr/` | Receiver backends: `sim` (generated signals), `file:<path>` (IQ recording playback), `rtlsdr` (a real dongle). |
-| `src/dsp/` | FFT and power spectrum; demodulators for broadcast FM, narrow FM and AM. |
+| `src/dsp/` | FFT and power spectrum; demodulators for broadcast FM, narrow FM, AM and single sideband. |
+| `src/adsb.*` | Aircraft (ADS-B) frame decoding. |
 | `src/client.*` | The small client library the on-screen apps use. |
 
 ![Simulated FM broadcast band](../docs/screenshots/spectrum-fm.png)
@@ -23,9 +24,11 @@ the base OS, so it builds and runs on any Linux PC.
   librtlsdr; that is all.
 - **Never heard by a person**: audio is checked by measurement only. The default player command
   has not been tried on the device.
-- Sensor decoding is tested with a stand-in for rtl_433 (`zrf-sim-sensors`); the real rtl_433 has
-  only been checked to accept our command line.
-- Not started: SSB, squelch, stereo and RDS, other decoders, rig control.
+- Sensor and aircraft decoding are tested with stand-ins (`zrf-sim-sensors`, `zrf-sim-aircraft`).
+  The real rtl_433 has only been checked to accept our command line; rtl_adsb, dump1090 and
+  rtl_tcp have not been run at all. The aircraft decoder itself is checked against published
+  reference frames.
+- Not started: stereo and RDS, pager and ship decoders, rig control.
 
 ## Build and try
 
@@ -43,6 +46,8 @@ ctest --test-dir build/rf --output-on-failure
 ./build/rf/zrf snapshot fm.ppm 320 100       # spectrum and waterfall picture
 ./build/rf/zrf listen wfm                    # play the tuned station; Ctrl-C to stop
 ./build/rf/zrf sensors                       # decoded sensor messages as JSON lines
+./build/rf/zrf aircraft                      # raw aircraft frames
+./build/rf/zrf record /tmp/capture.cu8 10    # ten seconds of raw IQ
 ```
 
 Audio goes to sox's `play` by default, or `aplay` if sox isn't installed. Choose another output with `--audio` or `ZRF_AUDIO`:
@@ -50,7 +55,8 @@ Audio goes to sox's `play` by default, or `aplay` if sox isn't installed. Choose
 rate, for example `cmd:pw-cat --playback --format s16 --channels 1 --rate %r -`.
 
 The simulated source has FM stations at 88.1, 94.5, 98.3, 98.7, 101.1 and 104.7 MHz, an airband
-carrier at 121.5 MHz, narrow FM at 145.5 and 162.55 MHz, and sensor-style bursts at 433.92 MHz.
+carrier at 121.5 MHz, narrow FM at 145.5 and 162.55 MHz, sensor-style bursts at 433.92 MHz, and
+sideband test tones at 14.2 MHz (upper) and 7.15 MHz (lower).
 
 ## Power rule
 
@@ -76,16 +82,18 @@ Commands, each answered with `ok ...` or `err <reason>`:
 | `gain <db>` or `gain auto` | Tuner gain. |
 | `spectrum <cols> [fps]` | Subscribe to spectrum frames reduced to `cols` columns (1 to 1024), at up to 30 frames a second. |
 | `spectrum off` | Unsubscribe. |
-| `decode sensors` or `decode off` | Hand the receiver to rtl_433 at the tuned frequency and forward what it decodes. Spectrum and audio stop meanwhile: one program owns the dongle at a time. Ends when the client that asked leaves. |
-| `mode wfm`, `nfm`, `am` or `off` | Listen to the tuned frequency: broadcast FM, narrow FM, AM, or stop. Audio is mono at about 32 kHz. |
-| `status` | `ok freq=... offset=... rate=... gain=... fps=... mode=... audio_rate=... decode=... running=0|1 source=... [error=...]` |
+| `decode sensors`, `aircraft`, `server` or `off` | Hand the receiver to another program and forward what it prints: rtl_433 at the tuned frequency (JSON), rtl_adsb or dump1090 (raw ADS-B frames), or rtl_tcp on port 1234 (its log). Spectrum and audio stop meanwhile: one program owns the dongle at a time. Ends when the client that asked leaves. |
+| `mode wfm`, `nfm`, `am`, `usb`, `lsb` or `off` | Listen to the tuned frequency: broadcast FM, narrow FM, AM, upper or lower sideband, or stop. Audio is mono at about 32 kHz. |
+| `squelch <db>` or `squelch off` | Mute audio unless the tuned signal is this many dB above the noise floor. |
+| `record <absolute path>` or `record off` | Write raw IQ (unsigned 8-bit pairs, `.cu8`) with a SigMF description beside it. Ends on retune, when storage is nearly full, or when the client that asked leaves. |
+| `status` | `ok freq=... offset=... rate=... gain=... fps=... mode=... audio_rate=... squelch=... signal=... open=0|1 decode=... recorded=... running=0|1 source=... [error=...]` |
 
 Lines the daemon sends without being asked, to clients that are watching or listening:
 
 | Line | Meaning |
 | --- | --- |
 | `S <freq_hz> <rate_hz> <hex>` | One spectrum frame. Two hex digits per column, lowest frequency first, so `freq_hz` is the middle. Level in dB relative to full scale is `value * 0.5 - 120`. |
-| `D <json>` | One decoded message, exactly as rtl_433 printed it. |
+| `D <line>` | One line from the decoding program, exactly as it printed it. |
 | `E <reason>` | The receiver can't be opened or stopped working (for example `no dongle`). The daemon retries every 2 seconds, so plugging a dongle in is enough. Also `audio output failed`. |
 
 A client that falls behind has frames dropped rather than queued.

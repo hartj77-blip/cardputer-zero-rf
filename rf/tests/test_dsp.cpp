@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fstream>
 
+#include "adsb.h"
 #include "dsp/demod.h"
 #include "dsp/spectrum.h"
 #include "json_flat.h"
@@ -166,6 +167,8 @@ static void test_demod() {
         {Mode::Nfm, 162.55e6, 1.024e6, 700},   // narrow FM
         {Mode::Nfm, 162.55e6, 2.048e6, 700},
         {Mode::Am, 121.5e6, 1.024e6, 1000},    // airband AM
+        {Mode::Usb, 14.2e6, 1.024e6, 700},     // upper sideband: tones 700 and 1900 Hz above the dial
+        {Mode::Lsb, 7.15e6, 250e3, 700},       // lower sideband
     };
     for (const Case& c : cases) {
         std::string err;
@@ -185,6 +188,36 @@ static void test_demod() {
         double level = rms(pcm, pcm.size() / 2);
         CHECK(level > 0.1 && level < 0.9);   // audible, not clipped
     }
+
+    // The wrong sideband is rejected. Input: a strong tone 700 Hz below the
+    // dial and one 20 dB weaker 1000 Hz above it. On USB the weak wanted tone
+    // must still come out at least 25 dB above what leaks of the strong one,
+    // which makes the rejection at least 45 dB.
+    const double rate = 1.024e6;
+    Demod demod(Mode::Usb, rate);
+    std::vector<cf32> block(4096);
+    std::vector<int16_t> pcm;
+    double t = 0;
+    while (pcm.size() < 16000) {
+        for (cf32& v : block) {
+            double a = -2 * M_PI * 700 * t, b = 2 * M_PI * 1000 * t;
+            v = cf32(float(0.1 * std::cos(a) + 0.01 * std::cos(b)), float(0.1 * std::sin(a) + 0.01 * std::sin(b)));
+            t += 1 / rate;
+        }
+        demod.run(block.data(), block.size(), pcm);
+    }
+    const size_t n = 8192;
+    Spectrum sp(n);
+    std::vector<cf32> v(n);
+    for (size_t i = 0; i < n; ++i) v[i] = cf32(pcm[pcm.size() - n + i] / 32768.0f, 0);
+    sp.add(v.data());
+    auto out = sp.take();
+    auto at = [&](double hz) {
+        size_t bin = n / 2 + size_t(hz * n / demod.audio_rate() + 0.5);
+        return std::max({out[bin - 1], out[bin], out[bin + 1]});
+    };
+    if (at(1000) - at(700) < 25) std::fprintf(stderr, "wanted %.1f dB, leak %.1f dB\n", at(1000), at(700));
+    CHECK(at(1000) - at(700) > 25);
 }
 
 static void test_json() {
@@ -201,6 +234,64 @@ static void test_json() {
     CHECK(parse_flat_json(R"({"a" 1})").empty() && parse_flat_json(R"({"a":"unterminated})").empty());
 }
 
+// Published reference frames with known answers, then our own encoder
+// checked against the decoder.
+static void test_adsb() {
+    AdsbTracker t;
+    CHECK(t.add("*8D4840D6202CC371C32CE0576098;", 0));
+    CHECK(t.aircraft().size() == 1 && t.aircraft()[0].icao == 0x4840D6 && t.aircraft()[0].callsign == "KLM1023");
+
+    CHECK(t.add("*8D40621D58C386435CC412692AD6;", 1));   // odd half
+    CHECK(!t.aircraft()[1].has_position);                // one half is not enough
+    CHECK(t.add("*8d40621d58c382d690c8ac2863a7;", 2));   // even half, lower case as rtl_adsb prints
+    const Aircraft& p = t.aircraft()[1];
+    CHECK(p.icao == 0x40621D && p.has_altitude && p.altitude_ft == 38000);
+    CHECK(p.has_position && std::fabs(p.lat - 52.2572) < 0.001 && std::fabs(p.lon - 3.91937) < 0.001);
+
+    CHECK(t.add("*8D485020994409940838175B284F;", 3));   // ground speed
+    const Aircraft& v = t.aircraft()[2];
+    CHECK(v.has_velocity && std::fabs(v.speed_kt - 159.2) < 0.1 && std::fabs(v.heading_deg - 182.88) < 0.01);
+    CHECK(v.climb_fpm == -832);
+    CHECK(t.add("*8DA05F219B06B6AF189400CBC33F;", 3));   // airspeed and heading
+    const Aircraft& w = t.aircraft()[3];
+    CHECK(w.has_velocity && std::fabs(w.speed_kt - 375) < 0.1 && std::fabs(w.heading_deg - 243.98) < 0.01);
+    CHECK(w.climb_fpm == -2304);
+
+    // Damaged, short and foreign lines are refused.
+    CHECK(!t.add("*8D4840D6202CC371C32CE0576099;", 4));  // one bit wrong
+    CHECK(!t.add("*5D4840D6A1B2C3;", 4) && !t.add("hello", 4) && !t.add("", 4) && !t.add("*8D48;", 4));
+    CHECK(t.aircraft().size() == 4);
+
+    // Round trip through our encoder at awkward places on the globe.
+    struct { double lat, lon; int alt; double spd, hdg; int climb; } cases[] = {
+        {40.6413, -73.7781, 11000, 250, 45, 1280}, {-33.9461, 151.1772, 35000, 480, 271, 0},
+        {64.13, -21.94, 2025, 140, 359, -640},     {0.01, 0.01, 41000, 510, 180, 64},
+        {51.47, -0.4543, 0, 120, 90, -1920},
+    };
+    uint32_t icao = 0xABC000;
+    for (auto& c : cases) {
+        AdsbTracker r;
+        CHECK(r.add(adsb_ident_frame(icao, "TEST12"), 0));
+        CHECK(r.add(adsb_position_frame(icao, c.alt, c.lat, c.lon, false), 0));
+        CHECK(r.add(adsb_position_frame(icao, c.alt, c.lat, c.lon, true), 1));
+        CHECK(r.add(adsb_velocity_frame(icao, c.spd, c.hdg, c.climb), 1));
+        const Aircraft& a = r.aircraft()[0];
+        CHECK(a.callsign == "TEST12" && a.altitude_ft == c.alt && a.has_position);
+        CHECK(std::fabs(a.lat - c.lat) < 0.0005 && std::fabs(a.lon - c.lon) < 0.0005);
+        CHECK(std::fabs(a.speed_kt - c.spd) < 1.5 && a.climb_fpm == c.climb);
+        double dh = std::fabs(a.heading_deg - c.hdg);
+        CHECK(std::min(dh, 360 - dh) < 0.5);
+        ++icao;
+    }
+    // Halves heard too far apart are not combined.
+    AdsbTracker far;
+    far.add(adsb_position_frame(1, 30000, 48, 11, false), 0);
+    far.add(adsb_position_frame(1, 30000, 48, 11, true), 30);
+    CHECK(!far.aircraft()[0].has_position);
+    far.expire(100);
+    CHECK(far.aircraft().empty());
+}
+
 int main() {
     test_fft();
     test_spectrum_level_and_position();
@@ -210,6 +301,7 @@ int main() {
     test_file_source();
     test_demod();
     test_json();
+    test_adsb();
     std::puts("all DSP tests passed");
     return 0;
 }

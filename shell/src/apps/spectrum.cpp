@@ -2,16 +2,22 @@
 //
 // Left/Right tune by one step, Up/Down change the step, Z/X narrow or widen
 // the view, G cycles gain, P toggles peak hold, C centres on the strongest
-// signal, M cycles listening (off, broadcast FM, narrow FM, AM). Type a
-// frequency in MHz and press Enter to jump to it. Audio stops on leaving.
+// signal, M cycles listening (off, broadcast FM, narrow FM, AM, upper and
+// lower sideband), S toggles squelch, B opens the band list, R records raw
+// IQ to ~/Recordings. Type a frequency in MHz and press Enter to jump to it.
+// Audio and recording stop on leaving.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <vector>
 
 #include "apps/common.h"
+#include <sys/stat.h>
+
+#include "apps/bands.h"
 #include "apps/radio_link.h"
 
 namespace zs {
@@ -26,18 +32,20 @@ const int kCanvasH = kTraceH + kFallH;
 const int kRangeDb = 60;                   // shown above the noise floor
 
 const double kMinHz = 0.5e6, kMaxHz = 1766e6;   // RTL-SDR Blog V4 range
-const double kSteps[] = {1e3, 10e3, 100e3, 1e6, 10e6};
+const double kSteps[] = {100, 1e3, 10e3, 100e3, 1e6, 10e6};
 const double kSpans[] = {250e3, 1.024e6, 2.048e6};   // sample rates an RTL-SDR accepts
 const int kGains[] = {-1, 0, 10, 20, 30, 40};       // -1 = automatic
-const char* const kModes[] = {"off", "wfm", "nfm", "am"};
-const char* const kModeNames[] = {"", "FM", "NFM", "AM"};
+const char* const kModes[] = {"off", "wfm", "nfm", "am", "usb", "lsb"};
+const char* const kModeNames[] = {"", "FM", "NFM", "AM", "USB", "LSB"};
+const int kSquelchDb = 10;   // above the noise floor
 
 uint16_t rgb565(int r, int g, int b) { return uint16_t((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3)); }
 uint16_t rgb565(uint32_t hex) { return rgb565(hex >> 16 & 255, hex >> 8 & 255, hex & 255); }
 
 std::string hz_text(double hz) {
     if (hz >= 1e6) return fmt("%g M", hz / 1e6);
-    return fmt("%g k", hz / 1e3);
+    if (hz >= 1e3) return fmt("%g k", hz / 1e3);
+    return fmt("%g Hz", hz);
 }
 
 class SpectrumApp : public App {
@@ -79,6 +87,13 @@ public:
             palette_[i] = rgb565(ramp(0.45f, 0.8f), ramp(0.15f, 0.65f), std::max(blue, ramp(0.85f, 1.0f)));
         }
 
+        band_list_ = make_list(root, 60, kTopH, 200, kContentH - kTopH - 2);
+        for (const Band& b : kBands) list_button(band_list_, nullptr, b.name, on_band_clicked, this);
+        finish_list(band_list_);
+        lv_obj_set_style_border_width(band_list_, 1, 0);
+        lv_obj_set_style_border_color(band_list_, c(kAccent), 0);
+        lv_obj_add_flag(band_list_, LV_OBJ_FLAG_HIDDEN);
+
         set_message("Starting radio...");
         update_labels();
         timer_ = lv_timer_create([](lv_timer_t* t) { static_cast<SpectrumApp*>(lv_timer_get_user_data(t))->pump(); },
@@ -87,6 +102,11 @@ public:
     }
 
     bool on_key(uint32_t key) override {
+        // The band list takes the arrow keys and Enter while it is open.
+        if (bands_open_) {
+            if (key == 'b' || key == 'B') { show_bands(false); return true; }
+            return key != LV_KEY_UP && key != LV_KEY_DOWN && key != LV_KEY_ENTER;
+        }
         // Typing a frequency.
         if ((key >= '0' && key <= '9') || key == '.') {
             if (entry_.size() < 9) entry_ += char(key);
@@ -120,9 +140,19 @@ public:
             send_gain();
             break;
         case 'm': case 'M':
-            mode_ = (mode_ + 1) % int(std::size(kModes));
+            // The first press picks the mode that suits the band chosen with B.
+            if (mode_ == 0 && band_mode_) { mode_ = band_mode_; band_mode_ = 0; }
+            else mode_ = (mode_ + 1) % int(std::size(kModes));
             client_.send(std::string("mode ") + kModes[mode_]);
             break;
+        case 's': case 'S':
+            squelch_ = !squelch_;
+            send_squelch();
+            shell_toast(squelch_ ? "Squelch on" : "Squelch off");
+            break;
+        case 'b': case 'B': show_bands(true); return true;
+        case 'r': case 'R': toggle_record(); break;
+        case LV_KEY_ENTER: return true;   // nothing to confirm; keep it from the hidden list
         case 'p': case 'P':
             peak_hold_ = !peak_hold_;
             std::fill(peak_.begin(), peak_.end(), 0);
@@ -141,6 +171,7 @@ public:
     }
 
     bool on_back() override {
+        if (bands_open_) { show_bands(false); return true; }
         if (entry_.empty()) return false;
         entry_.clear();
         update_labels();
@@ -160,6 +191,7 @@ private:
             send_gain();
             client_.send(fmt("tune %.0f", freq_));
             client_.send(fmt("spectrum %d 15", kW));
+            send_squelch();
             if (mode_) client_.send(std::string("mode ") + kModes[mode_]);
         }
 
@@ -172,7 +204,13 @@ private:
         auto& frames = ev.frames;
         if (ev.has_error && ev.error != error_) {
             error_ = ev.error;
-            if (error_ == "audio output failed") shell_toast("No audio output");
+            if (error_.rfind("recording stopped", 0) == 0 || error_ == "can't write the recording") {
+                recording_ = false;
+                shell_toast(error_ == "recording stopped: storage full" ? "Recording stopped: storage full"
+                            : error_ == "recording stopped: retuned" ? "Recording stopped (retuned)" : "Can't write the recording");
+                update_labels();
+                error_.clear();
+            } else if (error_ == "audio output failed") shell_toast("No audio output");
             else if (error_ == "no dongle") set_message("No radio found.\nPlug in an SDR dongle.");
             else if (!error_.empty()) set_message(("Radio: " + error_).c_str());
         }
@@ -209,6 +247,57 @@ private:
         shift_columns(kW);   // the old picture is at the wrong scale: clear it
         client_.send(fmt("rate %.0f", kSpans[span_]));
         lv_obj_invalidate(canvas_);
+    }
+
+    void toggle_record() {
+        if (recording_) {
+            recording_ = false;
+            client_.send("record off");
+            shell_toast("Saved " + record_name_);
+            return;
+        }
+        std::string dir = home_dir() + "/Recordings";
+        mkdir(dir.c_str(), 0755);
+        char when[32];
+        time_t t = time(nullptr);
+        tm lt{};
+        localtime_r(&t, &lt);
+        strftime(when, sizeof when, "%Y%m%d-%H%M%S", &lt);
+        record_name_ = fmt("iq_%.4fMHz_%s.cu8", freq_ / 1e6, when);
+        client_.send("record " + dir + "/" + record_name_);
+        recording_ = true;
+        shell_toast(fmt("Recording, %.1f MB a second", kSpans[span_] * 2 / 1e6));
+    }
+
+    void send_squelch() {
+        client_.send(squelch_ ? fmt("squelch %d", kSquelchDb) : std::string("squelch off"));
+    }
+
+    void show_bands(bool on) {
+        bands_open_ = on;
+        if (on) {
+            lv_obj_remove_flag(band_list_, LV_OBJ_FLAG_HIDDEN);
+            lv_group_focus_obj(lv_obj_get_child(band_list_, 0));
+        } else {
+            lv_obj_add_flag(band_list_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    static void on_band_clicked(lv_event_t* e) {
+        auto* self = static_cast<SpectrumApp*>(lv_event_get_user_data(e));
+        if (!self->bands_open_) return;
+        const Band& b = kBands[lv_obj_get_index(static_cast<lv_obj_t*>(lv_event_get_target(e)))];
+        self->show_bands(false);
+        self->set_span(b.span);
+        self->tune(b.home);
+        // Remember how this band is listened to; switch at once if already listening.
+        for (int i = 0; i < int(std::size(kModes)); ++i)
+            if (std::strcmp(kModes[i], b.mode) == 0) self->band_mode_ = i;
+        if (self->mode_ && self->band_mode_) {
+            self->mode_ = self->band_mode_;
+            self->client_.send(std::string("mode ") + kModes[self->mode_]);
+        }
+        self->update_labels();
     }
 
     void send_gain() {
@@ -284,13 +373,15 @@ private:
             lv_label_set_text(freq_label_, fmt("%.4f MHz", freq_ / 1e6).c_str());
         }
         std::string gain = kGains[gain_] < 0 ? "auto" : fmt("%d dB", kGains[gain_]);
-        std::string info = fmt("step %s  gain %s", hz_text(kSteps[step_]).c_str(), gain.c_str());
-        if (mode_) info += fmt("  " LV_SYMBOL_VOLUME_MAX " %s", kModeNames[mode_]);
+        std::string info = fmt("step %s", hz_text(kSteps[step_]).c_str());
+        if (mode_) info += fmt("  " LV_SYMBOL_VOLUME_MAX " %s%s", kModeNames[mode_], squelch_ ? " SQ" : "");
+        else info += fmt("  gain %s", gain.c_str());
+        if (recording_) info = LV_SYMBOL_SAVE " REC  " + info;
         lv_label_set_text(info_label_, info.c_str());
         double half = kSpans[span_] / 2;
         lv_label_set_text(low_label_, fmt("%.3f", (freq_ - half) / 1e6).c_str());
         lv_label_set_text(high_label_, fmt("%.3f", (freq_ + half) / 1e6).c_str());
-        lv_label_set_text(hint_label_, entry_.empty() ? "0-9 go to  Z X span  M listen" : "Enter go   Esc cancel");
+        lv_label_set_text(hint_label_, entry_.empty() ? "0-9 go to  B bands  M listen" : "Enter go   Esc cancel");
     }
 
     RadioLink link_;
@@ -303,7 +394,10 @@ private:
     std::vector<uint8_t> last_, peak_ = std::vector<uint8_t>(kW, 0);
     float floor_ = -1;
     double freq_ = 98.3e6;
-    int step_ = 2, span_ = 1, gain_ = 0, mode_ = 0;
+    int step_ = 3, span_ = 1, gain_ = 0, mode_ = 0, band_mode_ = 0;
+    bool squelch_ = false, bands_open_ = false, recording_ = false;
+    std::string record_name_;
+    lv_obj_t* band_list_ = nullptr;
     bool peak_hold_ = false;
     std::string entry_, error_;
 };

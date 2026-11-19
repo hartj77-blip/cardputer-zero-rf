@@ -56,11 +56,11 @@ Plug in the dongle (unplug and replug it if it was already in), attach the anten
 zeroos-rf-bringup
 ```
 
-It takes about 3 minutes (`--quick` skips the two long tests) and changes nothing. It checks, in
+It takes about 4 minutes (`--quick` skips the long tests) and changes nothing. It checks, in
 order: the dongle on USB, the driver and whether it recognises the V4, sample loss at three
 rates, the radio daemon on the real dongle, a scan of the FM band, CPU and memory while watching
 and while listening, power draw idle and receiving, six seconds of the strongest FM station through
-the speaker, and 30 seconds of sensor decoding.
+the speaker, 30 seconds of sensor decoding and 30 seconds of listening for aircraft.
 
 It also records the facts the plan is waiting on: the battery's design capacity, whether there is
 a clock chip, and whether the USB hub can switch port power.
@@ -76,8 +76,10 @@ The one thing the script can't judge is whether you heard the radio station. Not
 ## 4. Try the screens
 
 Open **Spectrum**: you should see the FM band if you type a local station's frequency and press
-Enter. **M** cycles listening. Open **Sensors** and wait a minute or two; most neighbourhoods have
-a weather station or two on 433.92 MHz (**F** changes band; 915 MHz is common in the Americas).
+Enter, or press **B** for the band list. **M** cycles listening. Open **Sensors** and wait a minute
+or two; most neighbourhoods have a weather station or two on 433.92 MHz (**F** changes band;
+915 MHz is common in the Americas). **Scanner** on Airband or Weather radio should stop on
+something within a sweep or two. **Aircraft** needs a view of the sky: try it by a window.
 
 ## If something fails
 
@@ -88,6 +90,8 @@ a weather station or two on 433.92 MHz (**F** changes band; 915 MHz is common in
 | The driver check doesn't say "RTL-SDR Blog V4" | The distribution's driver is too old for the V4 | Tell me: the image then needs the RTL-SDR Blog driver built in. |
 | Spectrum is flat everywhere | No antenna, or gain too low | Check the antenna; press **G** to step through gain. |
 | No sound, but the spectrum works | The audio player can't reach the speaker | Run `play -n synth 1 sine 440` on the device. If that is silent too, it is the base system's audio, not the radio. |
+| Scanner stops on a channel with nothing on it and stays | The dongle's own centre spike is above the stop line | Press **L** to lock that channel out, and tell me which band: the stop line may need raising. |
+| Aircraft stays empty | Indoors, or the stock antenna is the wrong length for 1090 MHz | Go to a window; shorten a telescopic antenna to about 7 cm. Installing `dump1090-mutability` gives a more sensitive decoder, which the app uses when present. |
 | "Radio service not available" | The home screen can't start `zrfd` | Run `zrfd --source rtlsdr` in a terminal and send what it prints. |
 | The home screen doesn't come up | A base OS or display problem, not RF | Everything in step 3 still works over SSH; send the report anyway. |
 | Device resets or the dongle drops out when it starts | USB port can't supply the dongle | Try a short USB extension lead, another port, or run from USB-C power. |

@@ -2,8 +2,8 @@
 # First-run check of ZeroOS RF on a real Cardputer Zero with a real dongle.
 # Run as the normal user (pi), over SSH or in the Terminal app, with the
 # dongle and an antenna plugged in:
-#   zeroos-rf-bringup            everything (about 3 minutes)
-#   zeroos-rf-bringup --quick    skip the long sample-loss and decoder tests
+#   zeroos-rf-bringup            everything (about 4 minutes)
+#   zeroos-rf-bringup --quick    skip the long sample-loss, sensor and aircraft tests
 # Nothing here changes the system. The full output is also saved to
 # ~/zeroos-rf-bringup.txt; that file is what to send back.
 set -u
@@ -171,6 +171,17 @@ if [ "$QUICK" = 0 ]; then
         else warn "rtl_433 ran but decoded nothing in 30 s (there may be no sensors nearby)"; fi
     else
         bad "rtl_433 is not installed"
+    fi
+fi
+
+if [ "$QUICK" = 0 ]; then
+    step "Aircraft (rtl_adsb at 1090 MHz, 30 s)"
+    if command -v rtl_adsb >/dev/null; then
+        COUNT=$(timeout 30 rtl_adsb 2>/dev/null | grep -c '^\*[0-9a-fA-F]\{28\};')
+        if [ "$COUNT" -gt 0 ]; then ok "$COUNT aircraft messages received"
+        else warn "no aircraft messages in 30 s (normal indoors or with a short antenna; try by a window)"; fi
+    else
+        bad "rtl_adsb is not installed"
     fi
 fi
 
