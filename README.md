@@ -10,7 +10,7 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 | Part | Status |
 | --- | --- |
 | `rf/` radio core: receiver backends, spectrum, FM and AM demodulation, the radio daemon `zrfd` and its protocol | Working against a simulated receiver and recorded files. Never run on a real dongle; audio checked by measurement, never by ear. |
-| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **APRS**, **Logbook**, **SDR Server**, **Station** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
+| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **APRS**, **FT8**, **Logbook**, **SDR Server**, **Station** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
 | `device/` the kit for a real unit: installer and first-run check | Dry-run against the simulated radio only. See [docs/BRINGUP.md](docs/BRINGUP.md). |
 | `base/` the base OS, [cardputer-zero](https://github.com/hartj77-blip/cardputer-zero), pinned as a submodule | Unchanged; we build on it, we don't fork it |
 | Image (SD card) build with the SDR packages | Not started |
@@ -42,6 +42,15 @@ the APRS frequency, and the rig for Hamlib (model number, serial port, speed). S
 Amateur packet stations on 144.390 MHz (**F** steps through other regions' frequencies and the
 ISS): one row per station with distance and direction from your grid, and what it last sent.
 **Enter** shows the packet. Uses `rtl_fm` and `multimon-ng`.
+
+## FT8
+
+The weak-signal digital mode. Every 15 seconds the stations heard on the band's FT8 frequency are
+listed with signal-to-noise ratio, audio frequency and message. Stations calling CQ are
+highlighted, a message that mentions your callsign more so, and a grid in a message becomes a
+distance from yours. **Left**/**Right** change band (160 m to 2 m), **Up**/**Down** scroll back.
+Receive only. The device's clock must be right to within about a second. Decoding is by
+[ft8_lib](https://github.com/kgoba/ft8_lib); see [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
 
 ## Logbook
 
@@ -129,4 +138,5 @@ Contents access to `cardputer-zero`. The radio core job needs no token.
 - [docs/FLASHING.md](docs/FLASHING.md): flashing the OS to an SD card and installing the kit.
 - [docs/BRINGUP.md](docs/BRINGUP.md): first run on a real device, and what to send back.
 - [docs/HAM.md](docs/HAM.md): for amateur radio operators: bands, modes, rig control, what's missing.
+- [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md): other people's code we build in, and its licences.
 - [rf/README.md](rf/README.md): the radio core and the daemon's protocol.

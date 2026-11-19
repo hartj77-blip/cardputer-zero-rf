@@ -82,6 +82,24 @@ bearing from your grid, plus weather, status and messages. **F** steps through 1
 positions are decoded; Mic-E positions (many mobile rigs) are listed but not placed yet. It
 receives only: it does not beacon, digipeat or gate to the internet.
 
+## FT8
+
+**FT8** listens on a band's FT8 frequency (upper sideband) and decodes each 15-second slot as it
+ends: UTC time, signal-to-noise ratio in dB, audio frequency, and the message. **Left**/**Right**
+step through 160, 80, 60, 40, 30, 20, 17, 15, 12, 10, 6 and 2 m. CQ calls are highlighted, and
+messages containing your callsign more so. With your grid set, a message that ends in a grid shows
+the distance.
+
+- **The clock matters.** FT8 slots are timed to the second. Join Wi-Fi so the device sets its clock
+  from the network; if every slot comes up empty on a band that should be busy, check the time
+  first.
+- **It receives only.** It will not answer a CQ or transmit anything.
+- **Expect less than WSJT-X.** The decoder is the lightweight ft8_lib, which misses some weak or
+  overlapping signals that WSJT-X would pull out. The dB figure is an estimate in the usual
+  2500 Hz reference, not WSJT-X's exact number.
+- **Callsign hashes** (the `<...>` shorthand in some messages) are not resolved.
+- On HF the dongle's limits apply as everywhere: a real antenna matters more than anything else.
+
 ## Logbook
 
 **Logbook** keeps your contacts as ADIF in `~/Documents/logbook.adi`. Press **N** for a new one:
@@ -106,7 +124,7 @@ requires; DIGI is written as mode DATA, so name the real mode in the comment if 
 ## Not there yet
 
 - Transmitting of any kind, PTT, or split/offset handling for repeaters.
-- FT8, FT4, RTTY, PSK31 and other digital modes.
+- FT4, RTTY, PSK31 and other digital modes; FT8 is receive-only.
 - Importing a log from another program on the device, editing a saved contact, and contest
   serial numbers.
 - Mic-E position decoding, and sending APRS.
