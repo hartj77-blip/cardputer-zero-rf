@@ -8,6 +8,7 @@ namespace zs {
 // RF apps (this repository).
 std::unique_ptr<App> make_spectrum_app();
 std::unique_ptr<App> make_sensors_app();
+std::unique_ptr<App> make_scanner_app();
 
 // Base apps.
 std::unique_ptr<App> make_settings_app();
@@ -30,6 +31,7 @@ std::unique_ptr<App> make_mesh_app();
 const std::vector<AppInfo>& app_registry() {
     static const std::vector<AppInfo> apps = {
         {"spectrum", "Spectrum", LV_SYMBOL_BARS, 0x39c5cf, make_spectrum_app},
+        {"scanner", "Scanner", LV_SYMBOL_REFRESH, 0x3fb950, make_scanner_app},
         {"sensors", "Sensors", LV_SYMBOL_TINT, 0x58a6ff, make_sensors_app},
 
         {"terminal", "Terminal", LV_SYMBOL_KEYBOARD, 0x3fb950, make_terminal_app},
