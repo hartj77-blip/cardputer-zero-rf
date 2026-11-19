@@ -12,8 +12,8 @@ Open **Station** and set:
 
 | Setting | What it does |
 | --- | --- |
-| Callsign | Shown in Station's title. Kept for features that will need it (logging). |
-| Grid locator | 4 or 6 characters (`FN31` or `FN31pr`). APRS shows each station's distance and direction from it. |
+| Callsign | Goes into every contact you log, as the station that made it. |
+| Grid locator | 4 or 6 characters (`FN31` or `FN31pr`). APRS shows each station's distance and direction from it, and it is logged with each contact. |
 | Frequency correction | The dongle's crystal error in ppm. An RTL-SDR Blog V4 is within about 1 ppm, so 0 is usually right. To measure it, tune a signal of known frequency (a NOAA weather channel, a beacon) and adjust until it sits on the centre line. |
 | Antenna power | The V4's bias tee: 4.5 V up the coax for a masthead amplifier, up to 180 mA. **Leave it off unless the antenna needs it**; into a DC-shorted antenna it does nothing useful and costs battery. Takes effect the next time an RF app opens. |
 | APRS frequency | In kHz: 144390 in the Americas, 144800 in Europe. |
@@ -82,6 +82,20 @@ bearing from your grid, plus weather, status and messages. **F** steps through 1
 positions are decoded; Mic-E positions (many mobile rigs) are listed but not placed yet. It
 receives only: it does not beacon, digipeat or gate to the internet.
 
+## Logbook
+
+**Logbook** keeps your contacts as ADIF in `~/Documents/logbook.adi`. Press **N** for a new one:
+it starts with the frequency and mode Spectrum is on (so with **F** following your rig, the rig's),
+the customary report (59, or 599 on CW) and the current time in UTC. Type the callsign; if you have
+worked the station before, the bottom line says when and on which band. **Enter** on a line edits
+it (on Mode it steps through USB, LSB, CW, FM, AM and DIGI), and **Save contact** writes it.
+
+**Enter** on a logged contact shows it; **D** twice there deletes it. The newest 40 are listed;
+the file holds them all. Each record carries your callsign and grid from Station. To upload to
+Logbook of the World, QRZ, eQSL or Club Log, copy the `.adi` file off the device (Sync does this)
+and import it there. Sideband contacts are written as mode SSB with submode USB or LSB, as ADIF
+requires; DIGI is written as mode DATA, so name the real mode in the comment if it matters.
+
 ## Also useful
 
 - **Scanner** on 2 m, 1.25 m and 70 cm: stops on active simplex and repeater outputs and logs them.
@@ -93,7 +107,8 @@ receives only: it does not beacon, digipeat or gate to the internet.
 
 - Transmitting of any kind, PTT, or split/offset handling for repeaters.
 - FT8, FT4, RTTY, PSK31 and other digital modes.
-- A logbook with ADIF export.
+- Importing a log from another program on the device, editing a saved contact, and contest
+  serial numbers.
 - Mic-E position decoding, and sending APRS.
 - Band edges for Regions 1 and 3, and licence-class sub-bands.
 - 50 versus 75 microsecond broadcast FM de-emphasis as a setting (it is 75, the Americas' value).

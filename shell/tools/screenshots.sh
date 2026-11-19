@@ -31,11 +31,23 @@ STEPS+=",enter,type:w1aw,enter,down,enter,type:FN31pr,wait:200,shot:18-station-e
 STEPS+=",enter,down,down,down,down,enter,type:1,enter,wait:200,shot:19-station-set.ppm"
 STEPS+=",open:aprs,wait:5000,shot:20-aprs.ppm"
 STEPS+=",enter,wait:300,shot:21-aprs-detail.ppm"
+STEPS+=",open:spectrum,key:b,down,down,down,down,down,down,down,down,down,down,down,down,down,down,down,enter,key:m,wait:400"
+STEPS+=",open:logbook,wait:200,shot:23-logbook-empty.ppm"
+STEPS+=",key:n,wait:200,type:k1xyz,wait:100,shot:24-logbook-new.ppm"
+STEPS+=",enter,down,down,down,down,down,enter,type:Field day,enter,down,enter,wait:400"
+STEPS+=",key:n,wait:200,type:ve3abc,enter,down,down,enter,enter,down,down,down,down,enter,wait:400"
+STEPS+=",key:n,wait:200,type:k1xyz,wait:100,shot:25-logbook-worked-before.ppm"
+STEPS+=",enter,esc,wait:300,shot:26-logbook.ppm"
+STEPS+=",down,enter,wait:300,shot:27-logbook-contact.ppm"
 # Following a rig needs Hamlib; its model 1 is a pretend rig sitting on 145 MHz.
 if command -v rigctld >/dev/null; then
-    STEPS+=",open:spectrum,key:f,wait:4000,shot:22-spectrum-follow-rig.ppm"
+    STEPS+=",open:spectrum,key:f,wait:4000,shot:28-spectrum-follow-rig.ppm"
 fi
 
 (cd "$OUT" && HOME="$DEMO" TZ=UTC ZRFD_SOCKET="$DEMO/zrfd.sock" ZRFD_BIN="$BUILD/rf/zrfd" ZRF_SOURCE=sim ZRF_AUDIO=none \
     "$BUILD/zeroshell" --script "$STEPS")
+# The contacts logged above must be on disk as ADIF another program can read.
+grep -q "<CALL:5>K1XYZ <QSO_DATE:8>" "$DEMO/Documents/logbook.adi" || { echo "logbook file missing the first contact" >&2; exit 1; }
+grep -q "<CALL:6>VE3ABC .*<MODE:2>CW <RST_SENT:3>599" "$DEMO/Documents/logbook.adi" || { echo "logbook file missing the CW contact" >&2; cat "$DEMO/Documents/logbook.adi" >&2; exit 1; }
+cp "$DEMO/Documents/logbook.adi" "$OUT/logbook-sample.adi"
 python3 "$HERE/../../base/shell/tools/ppm2png.py" "$OUT"

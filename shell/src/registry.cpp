@@ -13,6 +13,7 @@ std::unique_ptr<App> make_aircraft_app();
 std::unique_ptr<App> make_sdr_server_app();
 std::unique_ptr<App> make_aprs_app();
 std::unique_ptr<App> make_station_app();
+std::unique_ptr<App> make_logbook_app();
 
 // Base apps.
 std::unique_ptr<App> make_settings_app();
@@ -39,6 +40,7 @@ const std::vector<AppInfo>& app_registry() {
         {"sensors", "Sensors", LV_SYMBOL_TINT, 0x58a6ff, make_sensors_app},
         {"aircraft", "Aircraft", LV_SYMBOL_GPS, 0xe3b341, make_aircraft_app},
         {"aprs", "APRS", LV_SYMBOL_ENVELOPE, 0xff7eb6, make_aprs_app},
+        {"logbook", "Logbook", LV_SYMBOL_LIST, 0xe3b341, make_logbook_app},
         {"sdrserver", "SDR Server", LV_SYMBOL_UPLOAD, 0xa371f7, make_sdr_server_app},
         {"station", "Station", LV_SYMBOL_HOME, 0xff8a1f, make_station_app},
 

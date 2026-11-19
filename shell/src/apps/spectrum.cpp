@@ -20,6 +20,7 @@
 
 #include "apps/bands.h"
 #include "apps/radio_link.h"
+#include "apps/rf_state.h"
 #include "apps/rig_link.h"
 #include "ui/prefs.h"
 
@@ -419,6 +420,9 @@ private:
     }
 
     void update_labels() {
+        // Let the Logbook fill a new contact from where we are.
+        g_rf_last_hz = freq_;
+        g_rf_last_mode = mode_ ? kModes[mode_] : "";
         if (!entry_.empty()) {
             lv_label_set_text(freq_label_, ("Go to " + entry_ + "_ MHz").c_str());
         } else {

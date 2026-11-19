@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fstream>
 
+#include "adif.h"
 #include "adsb.h"
 #include "aprs.h"
 #include "dsp/demod.h"
@@ -354,6 +355,43 @@ static void test_aprs() {
     CHECK(!looks_like_callsign("HELLO") && !looks_like_callsign("12") && !looks_like_callsign("W1 AW"));
 }
 
+static void test_adif() {
+    CHECK(adif_band(14.225) == "20m" && adif_band(7.0) == "40m" && adif_band(146.52) == "2m");
+    CHECK(adif_band(446.0) == "70cm" && adif_band(223.5) == "1.25m" && adif_band(98.1).empty());
+
+    Qso q;
+    q.call = "w1aw"; q.date = "20261119"; q.time = "184530"; q.freq_mhz = 14.225; q.mode = "USB";
+    q.rst_sent = "59"; q.rst_rcvd = "57"; q.comment = "Hiram, Newington <CT>"; q.my_call = "n0call"; q.my_grid = "FN31pr";
+    std::string rec = adif_record(q);
+    // Exactly what other logging programs expect to read.
+    CHECK(rec == "<CALL:4>W1AW <QSO_DATE:8>20261119 <TIME_ON:6>184530 <FREQ:8>14.22500 <BAND:3>20m "
+                 "<MODE:3>SSB <SUBMODE:3>USB <RST_SENT:2>59 <RST_RCVD:2>57 <COMMENT:21>Hiram, Newington <CT> "
+                 "<STATION_CALLSIGN:6>N0CALL <MY_GRIDSQUARE:6>FN31pr <EOR>\n");
+
+    Qso cw = q;
+    cw.call = "VE3ABC/P"; cw.mode = "CW"; cw.freq_mhz = 7.03; cw.rst_sent = cw.rst_rcvd = "599"; cw.comment.clear();
+    Qso digi = q;
+    digi.call = "K1XYZ"; digi.mode = "DIGI"; digi.freq_mhz = 0;
+    std::string file = adif_header() + rec + adif_record(cw) + adif_record(digi);
+    auto log = adif_parse(file);
+    CHECK(log.size() == 3);
+    // The comment's angle brackets must not be read as a field.
+    CHECK(log[0].call == "W1AW" && log[0].mode == "USB" && log[0].comment == "Hiram, Newington <CT>");
+    CHECK(std::fabs(log[0].freq_mhz - 14.225) < 1e-9 && log[0].date == "20261119" && log[0].time == "184530");
+    CHECK(log[0].rst_sent == "59" && log[0].rst_rcvd == "57" && log[0].my_call == "N0CALL" && log[0].my_grid == "FN31pr");
+    CHECK(log[1].call == "VE3ABC/P" && log[1].mode == "CW" && log[1].rst_rcvd == "599" && log[1].comment.empty());
+    CHECK(log[2].call == "K1XYZ" && log[2].mode == "DIGI" && log[2].freq_mhz == 0);
+
+    // Another program's file: lower-case tags, type letters, fields we don't keep, no header.
+    auto other = adif_parse("<call:5>DL1AB<qso_date:8:d>20250101<time_on:4>0930<band:3>40m<mode:3>FT8<tx_pwr:3>100<eor>\n"
+                            "<name:3>Bob<eor><call:4>G4XY<mode:2>FM<eor>");
+    CHECK(other.size() == 2 && other[0].call == "DL1AB" && other[0].mode == "FT8" && other[0].time == "0930");
+    CHECK(other[1].call == "G4XY" && other[1].mode == "FM");
+    // A file cut off mid-record keeps the complete contacts.
+    CHECK(adif_parse(file.substr(0, file.size() - 40)).size() == 2);
+    CHECK(adif_parse("").empty() && adif_parse("not a log").empty() && adif_parse("<CALL:99>short").empty());
+}
+
 int main() {
     test_fft();
     test_spectrum_level_and_position();
@@ -366,6 +404,7 @@ int main() {
     test_json();
     test_adsb();
     test_aprs();
+    test_adif();
     std::puts("all DSP tests passed");
     return 0;
 }

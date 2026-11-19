@@ -10,7 +10,7 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 | Part | Status |
 | --- | --- |
 | `rf/` radio core: receiver backends, spectrum, FM and AM demodulation, the radio daemon `zrfd` and its protocol | Working against a simulated receiver and recorded files. Never run on a real dongle; audio checked by measurement, never by ear. |
-| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **APRS**, **SDR Server**, **Station** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
+| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **APRS**, **Logbook**, **SDR Server**, **Station** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
 | `device/` the kit for a real unit: installer and first-run check | Dry-run against the simulated radio only. See [docs/BRINGUP.md](docs/BRINGUP.md). |
 | `base/` the base OS, [cardputer-zero](https://github.com/hartj77-blip/cardputer-zero), pinned as a submodule | Unchanged; we build on it, we don't fork it |
 | Image (SD card) build with the SDR packages | Not started |
@@ -42,6 +42,14 @@ the APRS frequency, and the rig for Hamlib (model number, serial port, speed). S
 Amateur packet stations on 144.390 MHz (**F** steps through other regions' frequencies and the
 ISS): one row per station with distance and direction from your grid, and what it last sent.
 **Enter** shows the packet. Uses `rtl_fm` and `multimon-ng`.
+
+## Logbook
+
+Amateur radio contacts, kept as ADIF in `~/Documents/logbook.adi`, which every logging program,
+Logbook of the World, QRZ and eQSL can import (and which Sync copies off the device). **N** starts
+a contact with the frequency and mode Spectrum is on, the customary report (59, or 599 for CW) and
+the time in UTC; typing a callsign you have logged before says so. **Enter** on a contact shows
+it, and **D** there deletes it.
 
 ## Scanner
 

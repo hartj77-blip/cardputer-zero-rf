@@ -32,7 +32,7 @@ else()
 endif()
 
 # What a UI needs to talk to the daemon; no DSP, no receiver code.
-add_library(zrfclient STATIC src/client.cpp src/adsb.cpp src/aprs.cpp)
+add_library(zrfclient STATIC src/client.cpp src/adsb.cpp src/aprs.cpp src/adif.cpp)
 target_include_directories(zrfclient PUBLIC src)
 
 add_executable(zrfd src/zrfd.cpp)
