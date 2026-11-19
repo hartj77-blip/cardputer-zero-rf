@@ -187,6 +187,12 @@ private:
             return;
         }
         if (fresh) {
+            if (recording_) {
+                // The radio service restarted; whatever was recording has stopped.
+                recording_ = false;
+                shell_toast("Recording stopped (radio restarted)");
+                update_labels();
+            }
             client_.send(fmt("rate %.0f", kSpans[span_]));
             send_gain();
             client_.send(fmt("tune %.0f", freq_));

@@ -92,12 +92,18 @@ if command -v uhubctl >/dev/null; then
     else warn "uhubctl found no hub with per-port power switching (or needs sudo): $(sudo -n uhubctl 2>&1 | head -1)"; fi
 fi
 
+# Only one program can hold the dongle. An RF app left open on the device
+# would make every test below fail for the wrong reason.
+if pgrep -x "rtl_433|rtl_adsb|rtl_tcp|dump1090-mutabi" >/dev/null 2>&1; then
+    bad "another program is using the dongle: $(pgrep -a -x 'rtl_433|rtl_adsb|rtl_tcp|dump1090-mutabi' | head -1). Go back to the home screen on the device and run this again."
+fi
+
 step "Driver (rtl_test)"
 OUT=$(timeout 5 rtl_test -t 2>&1)
 echo "$OUT" | sed 's/^/        /' | head -14
 if echo "$OUT" | grep -qi "Blog V4"; then ok "driver recognises the RTL-SDR Blog V4"
 elif echo "$OUT" | grep -q "Found.*device"; then warn "dongle opens, but the driver did not say 'RTL-SDR Blog V4'. If this is a V4, HF and tuning may be wrong; the RTL-SDR Blog driver would be needed."
-else bad "rtl_test could not open the dongle"; fi
+else bad "rtl_test could not open the dongle. If an RF app (Spectrum, Scanner...) is open on the device, go back to the home screen and run this again."; fi
 
 if [ "$QUICK" = 0 ]; then
     step "Sample loss (10 s each)"

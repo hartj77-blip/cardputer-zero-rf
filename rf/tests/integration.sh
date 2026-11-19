@@ -85,6 +85,23 @@ col=$("$BIN/zrf" --socket "$DIR/play.sock" peak 320 | field col)
 kill "$PLAY"; wait "$PLAY" || true
 [ "$col" -ge 140 ] && [ "$col" -le 180 ] || fail "recording plays back with its peak at column $col, expected near 160"
 "$BIN/zrf" send record relative/path.cu8 >/dev/null && fail "accepted a relative recording path"
+# A recording can't be stopped or replaced from another connection.
+"$BIN/zrf" record "$DIR/owned.cu8" 2 &
+REC=$!
+sleep 0.8
+"$BIN/zrf" send record off >/dev/null && fail "another connection stopped a recording"
+wait $REC
+# A source that opens but gives no samples is retried slowly, not in a spin.
+: > "$DIR/empty.cu8"
+"$BIN/zrfd" --source "file:$DIR/empty.cu8" --socket "$DIR/empty.sock" &
+EMPTY=$!
+for _ in $(seq 50); do [ -S "$DIR/empty.sock" ] && break; sleep 0.1; done
+"$BIN/zrf" --socket "$DIR/empty.sock" watch 8 >/dev/null 2>&1 &
+W=$!
+sleep 1.5
+ticks=$(awk '{print $14 + $15}' "/proc/$EMPTY/stat")
+kill $W "$EMPTY" 2>/dev/null; wait $W "$EMPTY" 2>/dev/null || true
+[ "$ticks" -lt 30 ] || fail "daemon burned CPU on a source that gives no samples ($ticks ticks in 1.5 s)"
 
 # The sensor decoder's output reaches the client, and stops when it leaves.
 out=$("$BIN/zrf" sensors 2)

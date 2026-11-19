@@ -54,8 +54,12 @@ Wireless weather stations, tyre sensors, doorbells and remotes, decoded by
 
 ## On the device
 
-[docs/BRINGUP.md](docs/BRINGUP.md) walks through the first run on a real Cardputer Zero. Build
-the kit it uses with:
+1. [docs/FLASHING.md](docs/FLASHING.md): put a system on the microSD card (the Lite ships without
+   one) and get Wi-Fi and SSH working.
+2. Copy the kit over and run its installer; the same page has the commands.
+3. [docs/BRINGUP.md](docs/BRINGUP.md): the first-run check on a real unit, and what to send back.
+
+Build the kit with:
 
 ```sh
 sudo apt install g++-aarch64-linux-gnu       # plus arm64 librtlsdr; CI builds on an arm64 runner instead
@@ -97,5 +101,6 @@ Contents access to `cardputer-zero`. The radio core job needs no token.
 
 - [docs/PLAN.md](docs/PLAN.md): the architecture, the power, CPU and memory budget, the app list
   and the phases.
+- [docs/FLASHING.md](docs/FLASHING.md): flashing the OS to an SD card and installing the kit.
 - [docs/BRINGUP.md](docs/BRINGUP.md): first run on a real device, and what to send back.
 - [rf/README.md](rf/README.md): the radio core and the daemon's protocol.

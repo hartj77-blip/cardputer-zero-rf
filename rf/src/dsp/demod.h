@@ -42,7 +42,11 @@ public:
 private:
     Mode mode_;
     double audio_rate_;
-    FirDecim<cf32> channel_;      // to the channel bandwidth
+    // To the channel bandwidth, in two steps: a wide filter that brings the
+    // rate down cheaply, then a sharp one that keeps neighbours out.
+    FirDecim<cf32> channel_, channel2_;
+    std::vector<cf32> stage_buf_;
+    void run_channel(const cf32* in, size_t n);
     FirDecim<float> audio_;       // broadcast FM only: discriminator rate to audio rate
     std::vector<cf32> chan_buf_;
     std::vector<float> disc_buf_, audio_buf_;

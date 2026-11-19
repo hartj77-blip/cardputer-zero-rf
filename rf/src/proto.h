@@ -42,7 +42,10 @@ inline bool from_hex(const std::string& s, std::vector<uint8_t>& out) {
 
 inline std::string default_socket_path() {
     if (const char* p = std::getenv("ZRFD_SOCKET")) return p;
-    if (const char* d = std::getenv("XDG_RUNTIME_DIR")) return std::string(d) + "/zrfd.sock";
+    // The runtime directory only exists while the user has a login session;
+    // a service can be given the variable without it.
+    if (const char* d = std::getenv("XDG_RUNTIME_DIR"))
+        if (*d && access(d, W_OK | X_OK) == 0) return std::string(d) + "/zrfd.sock";
     return "/tmp/zrfd-" + std::to_string(getuid()) + ".sock";
 }
 
