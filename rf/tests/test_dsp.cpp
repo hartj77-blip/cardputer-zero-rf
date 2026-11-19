@@ -5,6 +5,7 @@
 #include <fstream>
 
 #include "adsb.h"
+#include "aprs.h"
 #include "dsp/demod.h"
 #include "dsp/spectrum.h"
 #include "json_flat.h"
@@ -317,6 +318,42 @@ static void test_adsb() {
     CHECK(far.aircraft().empty());
 }
 
+static void test_aprs() {
+    AprsPacket p;
+    // The two position examples from the APRS specification.
+    CHECK(parse_aprs("APRS: N0CALL-9>APRS,WIDE1-1,WIDE2-1:!4903.50N/07201.75W-Test 001234", p));
+    CHECK(p.source == "N0CALL-9" && p.destination == "APRS" && p.path == "WIDE1-1,WIDE2-1" && p.kind == "position");
+    CHECK(p.has_position && std::fabs(p.lat - 49.05833) < 1e-4 && std::fabs(p.lon + 72.02917) < 1e-4);
+    CHECK(p.text == "Test 001234");
+    CHECK(parse_aprs("N0CALL>APRS:=/5L!!<*e7>7P[", p));   // compressed, and without the "APRS: " prefix
+    CHECK(p.has_position && std::fabs(p.lat - 49.5) < 1e-3 && std::fabs(p.lon + 72.75) < 1e-3);
+    CHECK(parse_aprs("APRS: N0CALL>APRS:@092345z4903.50S/07201.75E>moving", p));   // with a time, other hemisphere
+    CHECK(p.has_position && p.lat < -49 && p.lon > 72 && p.text == "moving");
+
+    CHECK(parse_aprs("APRS: W1ABC-9>APDR16,WIDE1-1::K1XYZ    :Are you there?{07", p));
+    CHECK(p.kind == "message" && p.addressee == "K1XYZ" && p.text == "Are you there?" && !p.has_position);
+    CHECK(parse_aprs("APRS: AA1HAM>APRS:>On the air", p) && p.kind == "status" && p.text == "On the air");
+    CHECK(parse_aprs("APRS: KB1QRP-7>T1SUWV:`c5Pl >/", p) && p.kind == "Mic-E" && !p.has_position);
+    CHECK(parse_aprs("APRS: N1WX>APRS:@092345z4138.20N/07251.00W_090/005g010t052", p) && p.kind == "weather");
+    // A damaged position leaves the packet readable but unplaced.
+    CHECK(parse_aprs("APRS: N0CALL>APRS:!49x3.50N/07201.75W-", p) && !p.has_position);
+    CHECK(!parse_aprs("AFSK1200: garbage", p) && !parse_aprs("", p) && !parse_aprs("APRS: >APRS:!x", p));
+    CHECK(!parse_aprs("APRS: not a call>APRS:>hi", p));
+
+    double lat, lon, km, brg;
+    CHECK(grid_to_latlon("FN31pr", lat, lon) && std::fabs(lat - 41.7292) < 1e-3 && std::fabs(lon + 72.7083) < 1e-3);
+    CHECK(grid_to_latlon("jo65", lat, lon) && std::fabs(lat - 55.5) < 1e-9 && std::fabs(lon - 13.0) < 1e-9);
+    CHECK(!grid_to_latlon("ZZ99", lat, lon) && !grid_to_latlon("FN3", lat, lon) && !grid_to_latlon("FN31zz", lat, lon));
+    distance_bearing(0, 0, 0, 1, km, brg);   // one degree along the equator, due east
+    CHECK(std::fabs(km - 111.19) < 0.05 && std::fabs(brg - 90) < 0.01);
+    distance_bearing(0, 0, 1, 0, km, brg);   // one degree due north
+    CHECK(std::fabs(km - 111.19) < 0.05 && brg < 0.01);
+    distance_bearing(40.6413, -73.7781, 51.47, -0.4543, km, brg);   // New York JFK to London Heathrow
+    CHECK(std::fabs(km - 5540) < 15 && std::fabs(brg - 51.4) < 0.5);
+    CHECK(looks_like_callsign("W1AW") && looks_like_callsign("VE3ABC/P") && looks_like_callsign("N0CALL-9"));
+    CHECK(!looks_like_callsign("HELLO") && !looks_like_callsign("12") && !looks_like_callsign("W1 AW"));
+}
+
 int main() {
     test_fft();
     test_spectrum_level_and_position();
@@ -328,6 +365,7 @@ int main() {
     test_adjacent_channel();
     test_json();
     test_adsb();
+    test_aprs();
     std::puts("all DSP tests passed");
     return 0;
 }

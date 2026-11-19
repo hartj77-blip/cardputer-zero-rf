@@ -32,7 +32,7 @@ else()
 endif()
 
 # What a UI needs to talk to the daemon; no DSP, no receiver code.
-add_library(zrfclient STATIC src/client.cpp src/adsb.cpp)
+add_library(zrfclient STATIC src/client.cpp src/adsb.cpp src/aprs.cpp)
 target_include_directories(zrfclient PUBLIC src)
 
 add_executable(zrfd src/zrfd.cpp)
@@ -42,6 +42,7 @@ target_link_libraries(zrfd zrfcore)
 add_executable(zrf-sim-sensors src/sim_sensors.cpp)
 add_executable(zrf-sim-aircraft src/sim_aircraft.cpp)
 target_link_libraries(zrf-sim-aircraft zrfclient)
+add_executable(zrf-sim-aprs src/sim_aprs.cpp)
 
 add_executable(zrf src/zrf.cpp)
 target_include_directories(zrf PRIVATE src)
@@ -53,4 +54,4 @@ enable_testing()
 add_test(NAME dsp COMMAND test_dsp)
 add_test(NAME integration COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration.sh $<TARGET_FILE_DIR:zrfd>)
 
-install(TARGETS zrfd zrf zrf-sim-sensors zrf-sim-aircraft RUNTIME DESTINATION bin)
+install(TARGETS zrfd zrf zrf-sim-sensors zrf-sim-aircraft zrf-sim-aprs RUNTIME DESTINATION bin)

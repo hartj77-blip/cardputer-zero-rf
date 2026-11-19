@@ -132,6 +132,10 @@ out=$("$BIN/zrf" aircraft 3)
 [ "$(echo "$out" | grep -c '^\*8D[0-9A-F]\{26\};$')" -ge 5 ] || fail "no aircraft frames: $out"
 sleep 0.3
 pgrep -P "$PID" >/dev/null && fail "aircraft program left running"
+out=$("$BIN/zrf" aprs 2)
+echo "$out" | grep -q '^APRS: W1ABC-9>' || fail "no APRS packets: $out"
+sleep 0.3
+pgrep -P "$PID" >/dev/null && fail "APRS program left running"
 "$BIN/zrf" send decode submarines >/dev/null && fail "accepted an unknown decoder"   # our daemon's children only
 # The spectrum comes back afterwards.
 "$BIN/zrf" send tune 98300000 >/dev/null

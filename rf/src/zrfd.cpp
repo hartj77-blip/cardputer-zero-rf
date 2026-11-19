@@ -50,7 +50,7 @@ struct Settings {
     bool bias_tee = false;        // power an amplifier up the coax
     std::optional<double> squelch;   // mute audio unless the signal is this many dB above the noise
     std::string record;           // file to write raw IQ to; "" = not recording
-    std::string tool;             // hand the receiver to another program: "sensors", "aircraft", "server"; "" = none
+    std::string tool;             // hand the receiver to another program: "sensors", "aircraft", "aprs", "server"; "" = none
 };
 
 struct Shared {
@@ -267,6 +267,14 @@ std::string tool_command(const std::string& spec, const std::string& tool, doubl
         return "if command -v dump1090-mutability >/dev/null; then exec dump1090-mutability --device-index " + index +
                " --raw 2>/dev/null; else exec rtl_adsb -d " + index + " 2>/dev/null; fi";
     }
+    if (tool == "aprs") {
+        // Amateur packet radio: FM audio from rtl_fm into multimon-ng's
+        // 1200 baud decoder. Two programs, stopped together as one group.
+        if (sim) return "exec " + shell_quote(dir + "zrf-sim-aprs");
+        if (file) return "";
+        return "rtl_fm -d " + index + " -f " + std::to_string(std::llround(freq)) +
+               " -M fm -s 22050 -l 0 - 2>/dev/null | multimon-ng -t raw -a AFSK1200 -A - 2>/dev/null";
+    }
     if (tool == "server") {
         // Serve the dongle to SDR programs on other machines.
         if (sim) return "echo 'simulated server: nothing is listening'; exec sleep 86400";
@@ -401,8 +409,8 @@ void worker(std::string spec) {
         {
             std::lock_guard<std::mutex> lk(g.mu);
             want_tool = g.want.tool;
-            // Only the sensor decoder follows the tuned frequency.
-            want_freq = want_tool == "sensors" ? g.want.freq : 0;
+            // The sensor and packet decoders follow the tuned frequency.
+            want_freq = want_tool == "sensors" || want_tool == "aprs" ? g.want.freq : 0;
         }
         if (!want_tool.empty()) {
             // The other program needs the receiver to itself.
@@ -680,8 +688,8 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
         return "ok";
     }
     if (cmd == "decode") {
-        if (arg != "sensors" && arg != "aircraft" && arg != "server" && arg != "off")
-            return "err decode needs sensors, aircraft, server or off";
+        if (arg != "sensors" && arg != "aircraft" && arg != "aprs" && arg != "server" && arg != "off")
+            return "err decode needs sensors, aircraft, aprs, server or off";
         bool on = arg != "off";
         if (on != c.decoding) change_subscribers(c.decoding ? -1 : +1);
         c.decoding = on;
