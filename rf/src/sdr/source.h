@@ -23,6 +23,10 @@ public:
     virtual bool set_rate(double hz) = 0;
     // nullopt = automatic gain.
     virtual bool set_gain(std::optional<double> db) = 0;
+    // Correct the receiver's crystal error, in parts per million.
+    virtual bool set_ppm(int ppm) { return ppm == 0; }
+    // Power for an amplifier at the antenna, sent up the coax.
+    virtual bool set_bias_tee(bool on) { return !on; }
     // Blocks until n samples are ready, at the source's real pace.
     // Returns the number read; 0 means the source failed or was unplugged.
     virtual size_t read(cf32* out, size_t n) = 0;

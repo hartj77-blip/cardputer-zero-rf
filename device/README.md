@@ -1,7 +1,8 @@
 # ZeroOS RF kit
 
 Radio apps for the M5Stack Cardputer Zero with an RTL-SDR dongle: Spectrum, Scanner, Sensors,
-Aircraft and SDR Server.
+Aircraft, APRS, SDR Server and Station. Receive only. Amateur operators: see docs/HAM.md in the
+repository, and set your callsign and grid in Station first.
 
 ## Before you start
 

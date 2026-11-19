@@ -2,6 +2,7 @@
 // noise floor, so tuning around shows a believable band with no radio attached.
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 #include "sdr/source.h"
@@ -42,6 +43,10 @@ public:
         return true;
     }
     bool set_gain(std::optional<double>) override { return true; }
+    // The simulated crystal is 20 ppm fast until corrected by the same amount,
+    // when ZRF_SIM_PPM_ERROR is set; otherwise it is exact.
+    bool set_ppm(int ppm) override { ppm_ = ppm; return true; }
+    bool set_bias_tee(bool) override { return true; }
 
     size_t read(cf32* out, size_t n) override {
         const float noise = 0.003f;
@@ -49,7 +54,7 @@ public:
 
         for (size_t s = 0; s < std::size(kSignals); ++s) {
             const Signal& sig = kSignals[s];
-            double off = sig.hz - freq_;
+            double off = sig.hz - freq_ * (1 + (error_ppm_ - ppm_) * 1e-6);
             if (std::fabs(off) > rate_ * 0.42) continue;   // outside the receiver's filter
             double& ph = phase_[s];
             double& mod = mod_phase_[s];
@@ -104,6 +109,8 @@ private:
     float gauss() { return (uniform() + uniform() + uniform() + uniform()) * 1.7320508f; }
 
     double freq_ = 100e6, rate_ = 1.024e6, time_ = 0;
+    int ppm_ = 0;
+    const int error_ppm_ = std::getenv("ZRF_SIM_PPM_ERROR") ? std::atoi(std::getenv("ZRF_SIM_PPM_ERROR")) : 0;
     double phase_[std::size(kSignals)] = {}, mod_phase_[std::size(kSignals)] = {};
     uint32_t rng_ = 0x2545F491u;
     Pacer pacer_;

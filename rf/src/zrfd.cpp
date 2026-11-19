@@ -46,9 +46,11 @@ struct Settings {
     std::optional<double> gain;   // nullopt = automatic
     int fps = 15;
     Mode mode = Mode::Off;        // listening: demodulate the tuned frequency to audio
+    int ppm = 0;                  // crystal correction, parts per million
+    bool bias_tee = false;        // power an amplifier up the coax
     std::optional<double> squelch;   // mute audio unless the signal is this many dB above the noise
     std::string record;           // file to write raw IQ to; "" = not recording
-    std::string tool;             // hand the receiver to another program: "sensors", "aircraft", "server"; "" = none
+    std::string tool;             // hand the receiver to another program: "sensors", "aircraft", "aprs", "server"; "" = none
 };
 
 struct Shared {
@@ -265,6 +267,14 @@ std::string tool_command(const std::string& spec, const std::string& tool, doubl
         return "if command -v dump1090-mutability >/dev/null; then exec dump1090-mutability --device-index " + index +
                " --raw 2>/dev/null; else exec rtl_adsb -d " + index + " 2>/dev/null; fi";
     }
+    if (tool == "aprs") {
+        // Amateur packet radio: FM audio from rtl_fm into multimon-ng's
+        // 1200 baud decoder. Two programs, stopped together as one group.
+        if (sim) return "exec " + shell_quote(dir + "zrf-sim-aprs");
+        if (file) return "";
+        return "rtl_fm -d " + index + " -f " + std::to_string(std::llround(freq)) +
+               " -M fm -s 22050 -l 0 - 2>/dev/null | multimon-ng -t raw -a AFSK1200 -A - 2>/dev/null";
+    }
     if (tool == "server") {
         // Serve the dongle to SDR programs on other machines.
         if (sim) return "echo 'simulated server: nothing is listening'; exec sleep 86400";
@@ -339,6 +349,8 @@ bool apply(Source& src, const Settings& s, std::string& err) {
     if (!src.set_rate(s.rate)) { err = "sample rate not supported"; return false; }
     if (!src.set_freq(s.freq + s.offset)) { err = "frequency out of range"; return false; }
     if (!src.set_gain(s.gain)) { err = "gain not supported"; return false; }
+    if (!src.set_ppm(s.ppm)) { err = "frequency correction not supported"; return false; }
+    if (!src.set_bias_tee(s.bias_tee)) { err = "antenna power not supported by this receiver"; return false; }
     return true;
 }
 
@@ -397,8 +409,8 @@ void worker(std::string spec) {
         {
             std::lock_guard<std::mutex> lk(g.mu);
             want_tool = g.want.tool;
-            // Only the sensor decoder follows the tuned frequency.
-            want_freq = want_tool == "sensors" ? g.want.freq : 0;
+            // The sensor and packet decoders follow the tuned frequency.
+            want_freq = want_tool == "sensors" || want_tool == "aprs" ? g.want.freq : 0;
         }
         if (!want_tool.empty()) {
             // The other program needs the receiver to itself.
@@ -540,7 +552,7 @@ void worker(std::string spec) {
             ffts = 0;
             // Signal strength at the tuned frequency, against the noise floor
             // (the median of the whole view). Drives the squelch.
-            double half_width = cur.mode == Mode::Wfm ? 100e3 : cur.mode == Mode::Nfm ? 8e3 : cur.mode == Mode::Am ? 5e3 : 3e3;
+            double half_width = cur.mode == Mode::Wfm ? 100e3 : cur.mode == Mode::Nfm ? 8e3 : cur.mode == Mode::Am ? 5e3 : cur.mode == Mode::Cw ? 500 : 3e3;
             long w = std::max(1L, std::lround(half_width / (cur.rate / kNfft)));
             long lo = std::max(0L, long(kNfft / 2) - w), hi = std::min(long(kNfft) - 1, long(kNfft / 2) + w);
             float peak = *std::max_element(frame.begin() + lo, frame.begin() + hi + 1);
@@ -636,7 +648,7 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
     }
     if (cmd == "mode") {
         Mode m;
-        if (!parse_mode(arg, m)) return "err mode needs off, wfm, nfm, am, usb or lsb";
+        if (!parse_mode(arg, m)) return "err mode needs off, wfm, nfm, am, usb, lsb or cw";
         if ((m != Mode::Off) != c.listening) change_subscribers(c.listening ? -1 : +1);
         c.listening = m != Mode::Off;
         update([&](Settings& s) { s.mode = m; });
@@ -659,6 +671,16 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
         update([&](Settings& s) { s.record = on ? path : ""; });
         return "ok";
     }
+    if (cmd == "ppm") {
+        if (!is_num || std::fabs(num) > 500 || num != std::floor(num)) return "err ppm needs a whole number, -500..500";
+        update([&](Settings& s) { s.ppm = int(num); });
+        return "ok";
+    }
+    if (cmd == "biastee") {
+        if (arg != "on" && arg != "off") return "err biastee needs on or off";
+        update([&](Settings& s) { s.bias_tee = arg == "on"; });
+        return "ok";
+    }
     if (cmd == "squelch") {
         if (arg == "off") { update([](Settings& s) { s.squelch.reset(); }); return "ok"; }
         if (!is_num || num < 0 || num > 100) return "err squelch needs dB above the noise (0..100) or off";
@@ -666,8 +688,8 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
         return "ok";
     }
     if (cmd == "decode") {
-        if (arg != "sensors" && arg != "aircraft" && arg != "server" && arg != "off")
-            return "err decode needs sensors, aircraft, server or off";
+        if (arg != "sensors" && arg != "aircraft" && arg != "aprs" && arg != "server" && arg != "off")
+            return "err decode needs sensors, aircraft, aprs, server or off";
         bool on = arg != "off";
         if (on != c.decoding) change_subscribers(c.decoding ? -1 : +1);
         c.decoding = on;
@@ -677,9 +699,10 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
     if (cmd == "status") {
         std::lock_guard<std::mutex> lk(g.mu);
         char buf[480];
-        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s fps=%d mode=%s audio_rate=%.0f squelch=%s signal=%.1f open=%d decode=%s recorded=%.0f running=%d source=%s",
+        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s ppm=%d biastee=%s fps=%d mode=%s audio_rate=%.0f squelch=%s signal=%.1f open=%d decode=%s recorded=%.0f running=%d source=%s",
                       g.want.freq, g.want.offset, g.want.rate,
-                      g.want.gain ? std::to_string(*g.want.gain).c_str() : "auto", g.want.fps,
+                      g.want.gain ? std::to_string(*g.want.gain).c_str() : "auto", g.want.ppm,
+                      g.want.bias_tee ? "on" : "off", g.want.fps,
                       mode_name(g.want.mode), g.audio_rate,
                       g.want.squelch ? std::to_string(int(*g.want.squelch)).c_str() : "off", g.signal_db,
                       g.squelch_open ? 1 : 0, g.want.tool.empty() ? "off" : g.want.tool.c_str(), g.recorded_bytes, g.running ? 1 : 0, spec.c_str());

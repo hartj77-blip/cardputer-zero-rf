@@ -15,9 +15,9 @@ if [ "${1:-}" = "--uninstall" ]; then
         mv /usr/bin/zeroshell.base /usr/bin/zeroshell
         systemctl restart zeroshell.service || true
     fi
-    rm -f /usr/local/bin/zrfd /usr/local/bin/zrf /usr/local/bin/zrf-sim-sensors /usr/local/bin/zrf-sim-aircraft /usr/local/bin/zeroshell-rf \
+    rm -f /usr/local/bin/zrfd /usr/local/bin/zrf /usr/local/bin/zrf-sim-sensors /usr/local/bin/zrf-sim-aircraft /usr/local/bin/zrf-sim-aprs /usr/local/bin/zeroshell-rf \
           /usr/local/bin/zeroos-rf-bringup /usr/local/bin/zeroos-rf-start /usr/local/bin/zeroos-rf-stop /etc/udev/rules.d/60-zeroos-rf.rules /etc/modprobe.d/zeroos-rf-blacklist.conf
-    echo "ZeroOS RF removed. Packages (rtl-sdr, rtl-433, sox) were left installed."
+    echo "ZeroOS RF removed. Packages (rtl-sdr, rtl-433, multimon-ng, Hamlib, sox) were left installed."
     exit 0
 fi
 
@@ -25,7 +25,7 @@ echo "== Packages"
 apt-get update || echo "WARNING: could not refresh the package list; carrying on"
 # One at a time, so a package this image doesn't have can't stop the rest.
 MISSING=""
-for pkg in rtl-sdr rtl-433 sox alsa-utils usbutils uhubctl; do
+for pkg in rtl-sdr rtl-433 multimon-ng libhamlib-utils sox alsa-utils usbutils uhubctl; do
     apt-get install -y "$pkg" || MISSING="$MISSING $pkg"
 done
 [ -z "$MISSING" ] || echo "WARNING: could not install:$MISSING"
@@ -39,7 +39,7 @@ modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
 udevadm control --reload-rules && udevadm trigger || true
 
 echo "== Programs"
-for f in zrfd zrf zrf-sim-sensors zrf-sim-aircraft; do
+for f in zrfd zrf zrf-sim-sensors zrf-sim-aircraft zrf-sim-aprs; do
     [ -f "$HERE/bin/$f" ] && install -m 0755 "$HERE/bin/$f" /usr/local/bin/$f
 done
 install -m 0755 "$HERE/bringup.sh" /usr/local/bin/zeroos-rf-bringup

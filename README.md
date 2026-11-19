@@ -10,7 +10,7 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 | Part | Status |
 | --- | --- |
 | `rf/` radio core: receiver backends, spectrum, FM and AM demodulation, the radio daemon `zrfd` and its protocol | Working against a simulated receiver and recorded files. Never run on a real dongle; audio checked by measurement, never by ear. |
-| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **SDR Server** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
+| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **APRS**, **Logbook**, **SDR Server**, **Station** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
 | `device/` the kit for a real unit: installer and first-run check | Dry-run against the simulated radio only. See [docs/BRINGUP.md](docs/BRINGUP.md). |
 | `base/` the base OS, [cardputer-zero](https://github.com/hartj77-blip/cardputer-zero), pinned as a submodule | Unchanged; we build on it, we don't fork it |
 | Image (SD card) build with the SDR packages | Not started |
@@ -21,10 +21,35 @@ Left/Right tune by one step, Up/Down change the step size, **Z**/**X** narrow or
 **G** cycles gain, **P** toggles peak hold, **C** centres on the strongest signal. Type a frequency
 in MHz and press **Enter** to jump to it, or press **B** for a list of bands.
 
-**M** cycles listening: off, broadcast FM, narrow FM, AM, upper and lower sideband (after choosing
-a band, the first press picks the mode that suits it). **S** toggles squelch. **R** records raw IQ
+**M** cycles listening: off, broadcast FM, narrow FM, AM, upper and lower sideband, CW. The first
+press picks the mode that suits the frequency: the right sideband on an amateur band, CW at the
+bottom of one, AM on the airband. The bottom line names the band you are in and, while listening,
+shows signal strength above the noise. **S** toggles squelch. **R** records raw IQ
 to `~/Recordings` (about 2 MB a second at the default width; it stops by itself before the card
 fills, and when you retune). Audio and recording stop when you leave the app.
+
+**F** follows a transceiver's dial through Hamlib, so the display becomes a panadapter for the
+rig, and **T** sends the displayed frequency to the rig. Set the rig up in Station.
+
+## Station
+
+Your callsign and grid locator, the dongle's frequency correction (ppm), antenna power (bias tee),
+the APRS frequency, and the rig for Hamlib (model number, serial port, speed). See
+[docs/HAM.md](docs/HAM.md).
+
+## APRS
+
+Amateur packet stations on 144.390 MHz (**F** steps through other regions' frequencies and the
+ISS): one row per station with distance and direction from your grid, and what it last sent.
+**Enter** shows the packet. Uses `rtl_fm` and `multimon-ng`.
+
+## Logbook
+
+Amateur radio contacts, kept as ADIF in `~/Documents/logbook.adi`, which every logging program,
+Logbook of the World, QRZ and eQSL can import (and which Sync copies off the device). **N** starts
+a contact with the frequency and mode Spectrum is on, the customary report (59, or 599 for CW) and
+the time in UTC; typing a callsign you have logged before says so. **Enter** on a contact shows
+it, and **D** there deletes it.
 
 ## Scanner
 
@@ -103,4 +128,5 @@ Contents access to `cardputer-zero`. The radio core job needs no token.
   and the phases.
 - [docs/FLASHING.md](docs/FLASHING.md): flashing the OS to an SD card and installing the kit.
 - [docs/BRINGUP.md](docs/BRINGUP.md): first run on a real device, and what to send back.
+- [docs/HAM.md](docs/HAM.md): for amateur radio operators: bands, modes, rig control, what's missing.
 - [rf/README.md](rf/README.md): the radio core and the daemon's protocol.
