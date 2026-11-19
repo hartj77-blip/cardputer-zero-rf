@@ -16,20 +16,25 @@ if [ "${1:-}" = "--uninstall" ]; then
         systemctl restart zeroshell.service || true
     fi
     rm -f /usr/local/bin/zrfd /usr/local/bin/zrf /usr/local/bin/zrf-sim-sensors /usr/local/bin/zrf-sim-aircraft /usr/local/bin/zeroshell-rf \
-          /usr/local/bin/zeroos-rf-bringup /etc/udev/rules.d/60-zeroos-rf.rules /etc/modprobe.d/zeroos-rf-blacklist.conf
+          /usr/local/bin/zeroos-rf-bringup /usr/local/bin/zeroos-rf-start /usr/local/bin/zeroos-rf-stop /etc/udev/rules.d/60-zeroos-rf.rules /etc/modprobe.d/zeroos-rf-blacklist.conf
     echo "ZeroOS RF removed. Packages (rtl-sdr, rtl-433, sox) were left installed."
     exit 0
 fi
 
 echo "== Packages"
-apt-get update
-apt-get install -y rtl-sdr librtlsdr2 rtl-433 sox alsa-utils usbutils
-apt-get install -y uhubctl || echo "uhubctl not available; the USB power check will be skipped"
+apt-get update || echo "WARNING: could not refresh the package list; carrying on"
+# One at a time, so a package this image doesn't have can't stop the rest.
+MISSING=""
+for pkg in rtl-sdr rtl-433 sox alsa-utils usbutils uhubctl; do
+    apt-get install -y "$pkg" || MISSING="$MISSING $pkg"
+done
+[ -z "$MISSING" ] || echo "WARNING: could not install:$MISSING"
+command -v rtl_test >/dev/null || echo "WARNING: rtl-sdr is not installed, so the radio programs cannot run yet."
 
 echo "== Dongle access"
 install -m 0644 "$HERE/60-zeroos-rf.rules" /etc/udev/rules.d/60-zeroos-rf.rules
 install -m 0644 "$HERE/zeroos-rf-blacklist.conf" /etc/modprobe.d/zeroos-rf-blacklist.conf
-usermod -aG audio "$USER_NAME" || true
+usermod -aG audio,video,input "$USER_NAME" || true
 modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
 udevadm control --reload-rules && udevadm trigger || true
 
@@ -48,13 +53,34 @@ elif [ -f /etc/systemd/system/zeroshell.service ]; then
     systemctl restart zeroshell.service
     echo "ZeroShell replaced with the RF edition and restarted."
 else
+    # Stock image: install alongside M5's launcher, with a pair of commands to
+    # swap between the two. Both draw on the built-in screen, so only one runs.
     install -m 0755 "$HERE/bin/zeroshell" /usr/local/bin/zeroshell-rf
-    cat <<MSG
-Stock image: the RF home screen is installed as /usr/local/bin/zeroshell-rf.
-To try it, stop M5's launcher and start ours on the built-in screen:
-    systemctl --user stop APPLaunch 2>/dev/null || sudo systemctl stop APPLaunch
-    zeroshell-rf
-MSG
+    UNIT=$(systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}' | grep -i -m1 -E 'applaunch|launcher' || true)
+    cat > /usr/local/bin/zeroos-rf-start <<START
+#!/bin/sh
+# Stop M5's launcher and show the ZeroOS RF home screen. Ctrl-C (or
+# zeroos-rf-stop from another login) brings the launcher back.
+UNIT="$UNIT"
+if [ -n "\$UNIT" ]; then sudo systemctl stop "\$UNIT"; else sudo pkill -i -f applaunch; fi
+trap 'zeroos-rf-stop' EXIT INT TERM
+# Runs as you, not root: the screen and keyboard are open to the video and
+# input groups. If it reports it can't open them, send that message back.
+ZS_FRAMEBUFFER=/dev/fb0 /usr/local/bin/zeroshell-rf
+START
+    cat > /usr/local/bin/zeroos-rf-stop <<STOP
+#!/bin/sh
+# Close the ZeroOS RF home screen and bring M5's launcher back.
+UNIT="$UNIT"
+pkill -x zeroshell-rf
+pkill -x zrfd
+if [ -n "\$UNIT" ]; then sudo systemctl start "\$UNIT"; else echo "Restart the device to get M5's launcher back."; fi
+STOP
+    chmod 0755 /usr/local/bin/zeroos-rf-start /usr/local/bin/zeroos-rf-stop
+    echo "Stock image: the RF home screen is installed next to M5's launcher${UNIT:+ ($UNIT)}."
+    [ -n "$UNIT" ] || echo "NOTE: could not find M5's launcher service by name; zeroos-rf-start will stop it by process name instead."
+    echo "To show the RF home screen on the built-in screen:   zeroos-rf-start"
+    echo "To go back to M5's launcher:                         zeroos-rf-stop"
 fi
 
 echo

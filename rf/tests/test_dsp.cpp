@@ -220,6 +220,30 @@ static void test_demod() {
     CHECK(at(1000) - at(700) > 25);
 }
 
+// A strong station one channel away must not get into the audio: the wanted
+// signal is 30 dB weaker than a neighbour 12.5 kHz up, and still wins.
+static void test_adjacent_channel() {
+    for (double rate : {1.024e6, 2.048e6, 250e3}) {
+        Demod demod(Mode::Nfm, rate);
+        std::vector<cf32> block(4096);
+        std::vector<int16_t> pcm;
+        double t = 0, wanted = 0, other = 0;
+        while (pcm.size() < size_t(demod.audio_rate() * 0.5)) {
+            for (cf32& v : block) {
+                wanted += 2 * M_PI * (3000 * std::sin(2 * M_PI * 700 * t)) / rate;
+                other += 2 * M_PI * (12500 + 2500 * std::sin(2 * M_PI * 1900 * t)) / rate;
+                v = cf32(float(0.01 * std::cos(wanted) + 0.3 * std::cos(other)),
+                         float(0.01 * std::sin(wanted) + 0.3 * std::sin(other)));
+                t += 1 / rate;
+            }
+            demod.run(block.data(), block.size(), pcm);
+        }
+        double peak = audio_peak_hz(pcm, demod.audio_rate());
+        if (std::fabs(peak - 700) > 15) std::fprintf(stderr, "at %.0f: heard %.0f Hz instead of the wanted 700\n", rate, peak);
+        CHECK(std::fabs(peak - 700) < 15);
+    }
+}
+
 static void test_json() {
     auto f = parse_flat_json(R"({"model":"Acurite-Tower","id":11524,"temperature_C":21.3,"ok":true,)"
                              R"("name":"a \"b\", c","rows":[{"len":3,"data":"a,b}"},[1,2]],"last":-4.5} )");
@@ -300,6 +324,7 @@ int main() {
     test_sim_source();
     test_file_source();
     test_demod();
+    test_adjacent_channel();
     test_json();
     test_adsb();
     std::puts("all DSP tests passed");

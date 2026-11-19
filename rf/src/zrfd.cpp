@@ -198,13 +198,18 @@ public:
         return true;
     }
     // Returns the program's exit code, or -1 if it had to be stopped.
-    int stop() {
+    // exiting: its output has already closed, so it is on its way out.
+    int stop(bool exiting = false) {
         int code = -1;
         if (fd_ >= 0) ::close(fd_);
         fd_ = -1;
         if (pid_ > 0) {
             int status = 0;
-            if (waitpid(pid_, &status, WNOHANG) == pid_) {
+            // A program's output closes a moment before it can be collected:
+            // give one that is already exiting time to report how it ended.
+            pid_t got = 0;
+            for (int i = 0; i < 20 && (got = waitpid(pid_, &status, WNOHANG)) == 0 && exiting; ++i) usleep(10 * 1000);
+            if (got == pid_) {
                 if (WIFEXITED(status)) code = WEXITSTATUS(status);
             } else {
                 kill(-pid_, SIGTERM);
@@ -422,7 +427,7 @@ void worker(std::string spec) {
             }
             if (!alive) {
                 double ran = decoder.seconds_running();
-                int code = decoder.stop();
+                int code = decoder.stop(true);
                 // These programs give up at once when they find no dongle.
                 bool dongle = spec.rfind("rtlsdr", 0) == 0;
                 report_error(code == 127 ? "program not installed" : dongle && ran < 5 ? "no dongle" : "program stopped");
@@ -510,6 +515,9 @@ void worker(std::string spec) {
         if (src->read(block.data(), kNfft) != kNfft) {
             src.reset();
             report_error("receiver stopped");
+            // Don't spin if it keeps opening and then failing.
+            std::unique_lock<std::mutex> lk(g.mu);
+            g.cv.wait_for(lk, std::chrono::seconds(2), [] { return g.stop || g.subscribers == 0; });
             continue;
         }
         if (demod) {
@@ -640,6 +648,12 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
         if (path.empty()) return "err record needs a file path or off";
         bool on = path != "off";
         if (on && path[0] != '/') return "err record needs an absolute path";
+        {
+            // A recording belongs to the client that started it; nobody else
+            // may stop or replace it.
+            std::lock_guard<std::mutex> lk(g.mu);
+            if (!g.want.record.empty() && !c.recording) return "err another program is recording";
+        }
         if (on != c.recording) change_subscribers(c.recording ? -1 : +1);
         c.recording = on;
         update([&](Settings& s) { s.record = on ? path : ""; });

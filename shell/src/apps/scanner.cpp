@@ -121,7 +121,8 @@ private:
     double chunk_centre(int k) const {
         const Band& b = band();
         double step = 2 * kUsable * kRate;
-        double c = b.start + (k + 0.5) * step;
+        // A band that fits in one step sits in the middle of the view.
+        double c = b.end - b.start < step ? (b.start + b.end) / 2 : b.start + (k + 0.5) * step;
         return b.start + std::floor((c - b.start) / b.channel) * b.channel + b.channel / 2;
     }
     int chunk_count() const {

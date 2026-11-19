@@ -68,8 +68,8 @@ const double kAudioTarget = 32000;
 const double kSsbCentre = 1600, kSsbHalfWidth = 1400;
 
 struct Plan {
-    int chan_decim, audio_decim;
-    double chan_cutoff_hz, chan_rate;
+    int chan_decim, chan2_decim, audio_decim;
+    double chan_cutoff_hz, chan_rate;   // chan_rate: after both channel steps
 };
 
 Plan make_plan(Mode mode, double rate) {
@@ -79,19 +79,31 @@ Plan make_plan(Mode mode, double rate) {
         // Discriminate at about 8x the audio rate so the +-75 kHz swing fits.
         p.audio_decim = std::min(total, 8);
         p.chan_decim = std::max(1, total / p.audio_decim);
+        p.chan2_decim = 1;
         p.chan_cutoff_hz = 100e3;
     } else {
         p.audio_decim = 1;
-        p.chan_decim = total;
+        // Leave the last factor of 4 to the sharp second step where possible.
+        p.chan2_decim = total % 4 == 0 && total >= 8 ? 4 : 1;
+        p.chan_decim = total / p.chan2_decim;
         p.chan_cutoff_hz = mode == Mode::Am ? 5e3 : 6e3;
     }
-    p.chan_rate = rate / p.chan_decim;
+    p.chan_rate = rate / (p.chan_decim * p.chan2_decim);
     return p;
 }
 
+// First step. With a second step to follow it only has to protect the part
+// of the spectrum that step keeps: pass a quarter of its output rate.
 FirDecim<cf32> channel_filter(const Plan& p, double rate) {
-    double cutoff = std::min(p.chan_cutoff_hz / rate, 0.45 / p.chan_decim);
-    return FirDecim<cf32>(p.chan_decim, cutoff, p.chan_decim == 1 ? 1 : std::min(4 * p.chan_decim + 1, 257));
+    if (p.chan_decim == 1) return FirDecim<cf32>(1, 0.25, 1);
+    double cutoff = p.chan2_decim > 1 ? 0.25 / p.chan_decim : std::min(p.chan_cutoff_hz / rate, 0.45 / p.chan_decim);
+    return FirDecim<cf32>(p.chan_decim, cutoff, std::min(8 * p.chan_decim + 1, 257));
+}
+
+// Second step: the real channel filter, about 4 kHz from pass to stop.
+FirDecim<cf32> channel2_filter(const Plan& p, double rate) {
+    if (p.chan2_decim == 1) return FirDecim<cf32>(1, 0.25, 1);
+    return FirDecim<cf32>(p.chan2_decim, p.chan_cutoff_hz / (rate / p.chan_decim), 97);
 }
 
 }  // namespace
@@ -100,6 +112,7 @@ Demod::Demod(Mode mode, double rate)
     : mode_(mode),
       audio_rate_(make_plan(mode, rate).chan_rate / make_plan(mode, rate).audio_decim),
       channel_(channel_filter(make_plan(mode, rate), rate)),
+      channel2_(channel2_filter(make_plan(mode, rate), rate)),
       audio_(make_plan(mode, rate).audio_decim, 15e3 / make_plan(mode, rate).chan_rate,
              make_plan(mode, rate).audio_decim == 1 ? 1 : 6 * make_plan(mode, rate).audio_decim + 1),
       sideband_(1, kSsbHalfWidth / audio_rate_, mode == Mode::Usb || mode == Mode::Lsb ? 257 : 1) {
@@ -117,11 +130,17 @@ Demod::Demod(Mode mode, double rate)
     }
 }
 
+void Demod::run_channel(const cf32* in, size_t n) {
+    stage_buf_.clear();
+    channel_.run(in, n, stage_buf_);
+    channel2_.run(stage_buf_.data(), stage_buf_.size(), chan_buf_);
+}
+
 void Demod::run(const cf32* in, size_t n, std::vector<int16_t>& out) {
     chan_buf_.clear();
     audio_buf_.clear();
     if (mode_ == Mode::Usb || mode_ == Mode::Lsb) {
-        channel_.run(in, n, chan_buf_);
+        run_channel(in, n);
         mix_buf_.clear();
         for (const cf32& s : chan_buf_) {
             mix_buf_.push_back(s * pre_);
@@ -145,7 +164,7 @@ void Demod::run(const cf32* in, size_t n, std::vector<int16_t>& out) {
         for (float v : audio_buf_) out.push_back(int16_t(std::clamp(v, -1.0f, 1.0f) * 32000));
         return;
     }
-    channel_.run(in, n, chan_buf_);
+    run_channel(in, n);
 
     if (mode_ == Mode::Am) {
         for (const cf32& s : chan_buf_) {

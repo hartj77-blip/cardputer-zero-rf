@@ -8,13 +8,12 @@ an antenna, Wi-Fi, and a PC on the same network.
 
 ## 1. Get a system booting
 
-Use whichever image you trust most tonight:
+Follow [FLASHING.md](FLASHING.md): flash M5Stack's stock image with M5 Imager, setting a username,
+your Wi-Fi and **SSH on**, then boot and note the device's IP address. The stock image is the safe
+choice; the ZeroOS image has itself never booted on hardware.
 
-- **M5Stack's stock image** is the safe choice: it is known to boot. Flash it to the card.
-- **The ZeroOS image** from the base repository's *Build image* workflow has itself never booted on
-  hardware. Use it if you want to test both at once, and keep a stock card as a fallback.
-
-Boot, join Wi-Fi, and check you can log in from the PC:
+The commands below use `pi@cardputer.local`. On the stock image use the username you chose and the
+IP address the device shows, for example `pi@192.168.1.57`.
 
 ```bash
 ssh pi@cardputer.local
@@ -44,13 +43,18 @@ open the dongle, keeps the kernel's TV driver off it, and installs the programs.
 
 - On a **ZeroOS** image it replaces the home screen with the RF edition (the original is kept as
   `/usr/bin/zeroshell.base`) and restarts it.
-- On the **stock** image it installs alongside and prints how to start it by hand.
+- On the **stock** image it installs alongside M5's launcher. Log out and back in once, then
+  `zeroos-rf-start` shows the RF home screen on the built-in screen, and `zeroos-rf-stop` (or
+  Ctrl-C) brings M5's launcher back. This swap is the least certain part of the kit: if the screen
+  stays on M5's launcher or goes blank, send what `zeroos-rf-start` printed. The check in step 3
+  works either way.
 
 `sudo zeroos-rf/install.sh --uninstall` puts things back.
 
 ## 3. Run the check
 
-Plug in the dongle (unplug and replug it if it was already in), attach the antenna, then:
+Plug in the dongle (unplug and replug it if it was already in), attach the antenna, leave the
+device on its home screen with no RF app open, then:
 
 ```bash
 zeroos-rf-bringup
