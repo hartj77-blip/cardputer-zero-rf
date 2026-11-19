@@ -39,6 +39,8 @@ STEPS+=",key:n,wait:200,type:ve3abc,enter,down,down,enter,enter,down,down,down,d
 STEPS+=",key:n,wait:200,type:k1xyz,wait:100,shot:25-logbook-worked-before.ppm"
 STEPS+=",enter,esc,wait:300,shot:26-logbook.ppm"
 STEPS+=",down,enter,wait:300,shot:27-logbook-contact.ppm"
+STEPS+=",open:ft8,wait:300,shot:29-ft8-waiting.ppm"
+STEPS+=",wait:16000,shot:30-ft8.ppm"
 # Following a rig needs Hamlib; its model 1 is a pretend rig sitting on 145 MHz.
 if command -v rigctld >/dev/null; then
     STEPS+=",open:spectrum,key:f,wait:4000,shot:28-spectrum-follow-rig.ppm"

@@ -28,6 +28,7 @@
 
 #include "dsp/demod.h"
 #include "dsp/spectrum.h"
+#include "ft8.h"
 #include "proto.h"
 #include "sdr/source.h"
 
@@ -49,6 +50,7 @@ struct Settings {
     int ppm = 0;                  // crystal correction, parts per million
     bool bias_tee = false;        // power an amplifier up the coax
     std::optional<double> squelch;   // mute audio unless the signal is this many dB above the noise
+    bool ft8 = false;             // decode FT8 on the tuned (dial) frequency, upper sideband
     std::string record;           // file to write raw IQ to; "" = not recording
     std::string tool;             // hand the receiver to another program: "sensors", "aircraft", "aprs", "server"; "" = none
 };
@@ -376,6 +378,21 @@ void worker(std::string spec) {
     std::vector<float> sorted;
     bool squelch_open = true;
     int frames_below = 5;
+    // FT8: our own upper-sideband audio, collected one 15-second slot at a
+    // time by the real clock and decoded on a helper thread while the next
+    // slot is already being received.
+    std::unique_ptr<Demod> ft8_demod;
+    double ft8_rate = 0, ft8_freq = 0;
+    std::vector<int16_t> ft8_pcm;
+    std::vector<float> ft8_audio;
+    int64_t ft8_slot = -1;
+    bool ft8_whole = false;   // this slot was received from its start, on one frequency
+    std::thread ft8_thread;
+    auto stop_ft8 = [&] {
+        ft8_demod.reset();
+        ft8_slot = -1;
+        if (ft8_thread.joinable()) ft8_thread.join();
+    };
     Recorder recorder;
     Decoder decoder;
     double decoder_freq = 0;
@@ -386,10 +403,16 @@ void worker(std::string spec) {
     for (;;) {
         {
             std::unique_lock<std::mutex> lk(g.mu);
-            if (g.stop) return;
+            if (g.stop) {
+                lk.unlock();
+                stop_ft8();
+                return;
+            }
             if (g.subscribers == 0) {
                 // Nobody watching or listening: release the receiver and sleep.
                 src.reset();
+                ft8_demod.reset();
+                ft8_slot = -1;
                 recorder.close();
                 g.recorded_bytes = 0;
                 demod.reset();
@@ -414,7 +437,7 @@ void worker(std::string spec) {
         }
         if (!want_tool.empty()) {
             // The other program needs the receiver to itself.
-            if (src) { src.reset(); stop_audio(); recorder.close(); }
+            if (src) { src.reset(); stop_audio(); recorder.close(); stop_ft8(); }
             if (!decoder.running() || decoder_freq != want_freq || decoder_tool != want_tool) {
                 std::string cmd = tool_command(spec, want_tool, want_freq);
                 if (cmd.empty() || !decoder.start(cmd)) {
@@ -507,6 +530,18 @@ void worker(std::string spec) {
                     cur.record.clear();
                 }
             }
+            // FT8 needs its own demodulator; a retune spoils the slot in progress.
+            if (!cur.ft8) {
+                if (ft8_demod) stop_ft8();
+            } else if (!ft8_demod || ft8_rate != cur.rate) {
+                if (cur.rate >= 64e3) {
+                    ft8_demod = std::make_unique<Demod>(Mode::Usb, cur.rate);
+                    ft8_rate = cur.rate;
+                    ft8_slot = -1;
+                }
+            }
+            if (ft8_freq != cur.freq) ft8_whole = false;
+            ft8_freq = cur.freq;
             // With squelch on, stay muted until a frame shows a signal here.
             frames_below = 5;
             squelch_open = !cur.squelch;
@@ -537,6 +572,46 @@ void worker(std::string spec) {
             demod->run(block.data(), kNfft, pcm);
             if (cur.squelch && !squelch_open) std::fill(pcm.begin(), pcm.end(), int16_t(0));
             if (!sink.write(pcm)) notify("audio output failed");
+        }
+        if (ft8_demod) {
+            ft8_pcm.clear();
+            ft8_demod->run(block.data(), kNfft, ft8_pcm);
+            double audio_rate = ft8_demod->audio_rate();
+            double now = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+            int64_t slot = int64_t(std::floor(now / kFt8SlotSeconds));
+            if (slot != ft8_slot) {
+                // A slot just ended: decode it if we heard all of it.
+                if (ft8_slot >= 0 && ft8_whole && ft8_audio.size() >= size_t(13.3 * audio_rate)) {
+                    if (ft8_thread.joinable()) ft8_thread.join();
+                    ft8_thread = std::thread([audio = std::move(ft8_audio), rate = int(std::lround(audio_rate)), start = ft8_slot] {
+                        std::vector<Ft8Message> found = ft8_decode(audio.data(), audio.size(), rate);
+                        time_t t = time_t(start * 15);
+                        tm utc{};
+                        gmtime_r(&t, &utc);
+                        std::lock_guard<std::mutex> lk(g.mu);
+                        for (const Ft8Message& m : found) {
+                            char line[160];
+                            std::snprintf(line, sizeof line, "FT8 %02d%02d%02d %d %.1f %.0f %s", utc.tm_hour, utc.tm_min, utc.tm_sec,
+                                          m.snr_db, m.dt, m.freq_hz, m.text.c_str());
+                            if (g.decoded.size() < 500) g.decoded.push_back(line);
+                        }
+                        // An empty slot is news too: it tells the screen the decoder is alive.
+                        char done[48];
+                        std::snprintf(done, sizeof done, "FT8 %02d%02d%02d done %zu", utc.tm_hour, utc.tm_min, utc.tm_sec, found.size());
+                        if (g.decoded.size() < 500) g.decoded.push_back(done);
+                        wake_main();
+                    });
+                }
+                ft8_audio.clear();
+                ft8_slot = slot;
+                // Line the audio up with the slot: fill in what was missed at
+                // its start, and give up on the slot if that was much.
+                double into = now - double(slot) * kFt8SlotSeconds;
+                ft8_whole = into < 1.0;
+                ft8_audio.assign(size_t(std::max(0.0, into) * audio_rate), 0.0f);
+            }
+            if (ft8_audio.size() < size_t(15.5 * audio_rate))
+                for (int16_t v : ft8_pcm) ft8_audio.push_back(v / 32768.0f);
         }
         if (recorder.active() && !recorder.write(block.data(), kNfft)) {
             notify("recording stopped: storage full");
@@ -688,12 +763,17 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
         return "ok";
     }
     if (cmd == "decode") {
-        if (arg != "sensors" && arg != "aircraft" && arg != "aprs" && arg != "server" && arg != "off")
-            return "err decode needs sensors, aircraft, aprs, server or off";
+        if (arg != "sensors" && arg != "aircraft" && arg != "aprs" && arg != "ft8" && arg != "server" && arg != "off")
+            return "err decode needs sensors, aircraft, aprs, ft8, server or off";
         bool on = arg != "off";
         if (on != c.decoding) change_subscribers(c.decoding ? -1 : +1);
         c.decoding = on;
-        update([&](Settings& s) { s.tool = on ? arg : ""; });
+        // FT8 is decoded here, alongside the spectrum; the rest hand the
+        // receiver to another program.
+        update([&](Settings& s) {
+            s.ft8 = arg == "ft8";
+            s.tool = on && arg != "ft8" ? arg : "";
+        });
         return "ok";
     }
     if (cmd == "status") {
@@ -705,7 +785,7 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
                       g.want.bias_tee ? "on" : "off", g.want.fps,
                       mode_name(g.want.mode), g.audio_rate,
                       g.want.squelch ? std::to_string(int(*g.want.squelch)).c_str() : "off", g.signal_db,
-                      g.squelch_open ? 1 : 0, g.want.tool.empty() ? "off" : g.want.tool.c_str(), g.recorded_bytes, g.running ? 1 : 0, spec.c_str());
+                      g.squelch_open ? 1 : 0, g.want.ft8 ? "ft8" : g.want.tool.empty() ? "off" : g.want.tool.c_str(), g.recorded_bytes, g.running ? 1 : 0, spec.c_str());
         std::string out = buf;
         if (!g.error.empty()) out += " error=" + g.error;
         return out;
@@ -854,7 +934,7 @@ int main(int argc, char** argv) {
             if (was_decoding) {
                 bool others = false;
                 for (auto& [other_fd, other] : clients) others = others || other.decoding;
-                if (!others) update([](Settings& s) { s.tool.clear(); });
+                if (!others) update([](Settings& s) { s.tool.clear(); s.ft8 = false; });
             }
             last_client = std::chrono::steady_clock::now();
         }

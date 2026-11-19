@@ -6,7 +6,7 @@ supported dongle is the RTL-SDR Blog V4.
 
 Status: phases R0, R2, R3 (except ships) and R4 are written and run against a simulated receiver:
 Spectrum with FM, AM, sideband and CW listening, squelch and IQ recording; Scanner; Sensors;
-Aircraft; APRS; SDR Server; Station settings; and rig frequency control through Hamlib. Phase R1,
+Aircraft; APRS; FT8; Logbook; SDR Server; Station settings; and rig frequency control through Hamlib. Phase R1,
 the first run on real hardware, is next: [BRINGUP.md](BRINGUP.md). Nothing has been tried on a
 device or a real dongle. Pager decoding has been dropped (private communications).
 

@@ -142,7 +142,7 @@ int usage() {
                  "       zrf [--socket <path>] watch [cols]\n"
                  "       zrf [--socket <path>] record <file.cu8> [seconds]\n"
                  "       zrf [--socket <path>] listen <wfm|nfm|am> [seconds]\n"
-                 "       zrf [--socket <path>] sensors|aircraft|aprs|server [seconds]\n"
+                 "       zrf [--socket <path>] sensors|aircraft|aprs|ft8|server [seconds]\n"
                  "       zrf [--socket <path>] snapshot <out.ppm> [cols] [rows]\n");
     return 2;
 }
@@ -220,7 +220,7 @@ int main(int argc, char** argv) {
             if (read_line(line, 100) && line.rfind("E ", 0) == 0) std::fprintf(stderr, "zrf: %s\n", line.c_str() + 2);
         return 0;
     }
-    if (cmd == "sensors" || cmd == "aircraft" || cmd == "aprs" || cmd == "server") {
+    if (cmd == "sensors" || cmd == "aircraft" || cmd == "aprs" || cmd == "ft8" || cmd == "server") {
         int seconds = int_arg(0);
         std::string reply, line;
         if (!send_line("decode " + cmd) || !read_line(reply)) return 1;

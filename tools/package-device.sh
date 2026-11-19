@@ -18,7 +18,7 @@ for f in zeroshell rf/zrfd rf/zrf rf/zrf-sim-sensors rf/zrf-sim-aircraft rf/zrf-
     "$STRIP" "$KIT/bin/$(basename "$f")"
 done
 [ -f "$KIT/bin/zrfd" ] || { echo "no zrfd in $BUILD" >&2; exit 1; }
-cp "$ROOT"/device/README.md "$ROOT"/device/install.sh "$ROOT"/device/bringup.sh "$ROOT"/device/60-zeroos-rf.rules \
+cp "$ROOT"/docs/THIRD_PARTY.md "$ROOT"/device/README.md "$ROOT"/device/install.sh "$ROOT"/device/bringup.sh "$ROOT"/device/60-zeroos-rf.rules \
    "$ROOT"/device/zeroos-rf-blacklist.conf "$KIT/"
 git -C "$ROOT" describe --always --dirty > "$KIT/VERSION" 2>/dev/null || echo dev > "$KIT/VERSION"
 tar -C "$STAGE" -czf "$OUT" zeroos-rf
