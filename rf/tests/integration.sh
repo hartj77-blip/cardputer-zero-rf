@@ -63,7 +63,7 @@ out=$("$BIN/zrf" sensors 2)
 echo "$out" | grep -q '"model":"Acurite-Tower"' || fail "no decoded sensor messages: $out"
 sleep 0.3
 [ "$("$BIN/zrf" send status | field decode)" = off ] || fail "still decoding after the client left"
-pgrep -f zrf-sim-sensors >/dev/null && fail "decoder program left running"
+pgrep -P "$PID" >/dev/null && fail "decoder program left running"   # our daemon's children only
 # The spectrum comes back afterwards.
 "$BIN/zrf" send tune 98300000 >/dev/null
 "$BIN/zrf" peak 320 >/dev/null || fail "no spectrum after decoding"
