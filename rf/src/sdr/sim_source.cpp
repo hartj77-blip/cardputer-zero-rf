@@ -9,7 +9,7 @@
 namespace zrf {
 namespace {
 
-enum class Kind { FmBroadcast, NarrowFm, AmTone, Bursts };
+enum class Kind { FmBroadcast, NarrowFm, AmTone, Bursts, UpperTones, LowerTones };
 
 struct Signal {
     double hz;
@@ -23,6 +23,8 @@ const Signal kSignals[] = {
     {101.1e6, 0.25f, Kind::FmBroadcast}, {104.7e6, 0.15f, Kind::FmBroadcast},
     {121.5e6, 0.05f, Kind::AmTone},      {145.5e6, 0.10f, Kind::NarrowFm},
     {162.55e6, 0.12f, Kind::NarrowFm},   {433.92e6, 0.30f, Kind::Bursts},
+    // Sideband stand-ins: two tones 700 and 1900 Hz above (or below) the dial frequency.
+    {14.2e6, 0.10f, Kind::UpperTones},   {7.15e6, 0.10f, Kind::LowerTones},
 };
 
 const double kTwoPi = 6.283185307179586;
@@ -68,6 +70,15 @@ public:
                     mod += kTwoPi * 1000.0 / rate_;
                     amp *= 1.0f + 0.6f * float(std::sin(mod));
                     break;
+                case Kind::UpperTones:
+                case Kind::LowerTones: {
+                    // Carrier suppressed: only the two tones are sent.
+                    double sign = sig.kind == Kind::UpperTones ? 1 : -1;
+                    mod += kTwoPi * 700.0 / rate_;
+                    double a = kTwoPi * off * t + sign * mod, b = kTwoPi * off * t + sign * mod * (1900.0 / 700.0);
+                    out[i] += cf32(sig.amp * float(std::cos(a) + 0.6 * std::cos(b)), sig.amp * float(std::sin(a) + 0.6 * std::sin(b)));
+                    continue;
+                }
                 case Kind::Bursts:
                     // 120 ms of on-off keying every 1.5 s, like a weather sensor.
                     if (std::fmod(t, 1.5) > 0.12 || std::fmod(t, 0.001) > 0.0005) amp = 0;
@@ -77,7 +88,7 @@ public:
                 if (amp != 0) out[i] += cf32(amp * float(std::cos(ph)), amp * float(std::sin(ph)));
             }
             ph = std::fmod(ph, kTwoPi);
-            mod = std::fmod(mod, kTwoPi * 1000);
+            mod = std::fmod(mod, kTwoPi * 7000);   // a whole number of turns for every tone derived from it
         }
         time_ += n / rate_;
         pacer_.wait(n, rate_);

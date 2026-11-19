@@ -58,6 +58,17 @@ bytes=$(stat -c %s "$DIR/audio.raw")
 [ "$bytes" -ge 96000 ] && [ "$bytes" -le 150000 ] || fail "2 s of 32 kHz audio should be about 128000 bytes, got $bytes"
 "$BIN/zrf" send mode ssb >/dev/null && fail "accepted an unknown mode"
 
+# Squelch: silence on an empty frequency, audio on a signal.
+"$BIN/zrf" send squelch 10 >/dev/null
+"$BIN/zrf" send tune 163200000 >/dev/null
+"$BIN/zrf" listen nfm 2
+[ "$(tr -d '\0' < "$DIR/audio.raw" | wc -c)" -lt 2000 ] || fail "squelch let noise through on an empty frequency"
+"$BIN/zrf" send tune 162550000 >/dev/null
+"$BIN/zrf" listen nfm 2
+[ "$(tr -d '\0' < "$DIR/audio.raw" | wc -c)" -gt 60000 ] || fail "squelch muted a strong signal"
+"$BIN/zrf" send squelch off >/dev/null
+"$BIN/zrf" send squelch loud >/dev/null && fail "accepted a bad squelch level"
+
 # The sensor decoder's output reaches the client, and stops when it leaves.
 out=$("$BIN/zrf" sensors 2)
 echo "$out" | grep -q '"model":"Acurite-Tower"' || fail "no decoded sensor messages: $out"

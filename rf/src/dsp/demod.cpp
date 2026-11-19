@@ -10,6 +10,8 @@ bool parse_mode(const std::string& s, Mode& out) {
     else if (s == "wfm") out = Mode::Wfm;
     else if (s == "nfm") out = Mode::Nfm;
     else if (s == "am") out = Mode::Am;
+    else if (s == "usb") out = Mode::Usb;
+    else if (s == "lsb") out = Mode::Lsb;
     else return false;
     return true;
 }
@@ -19,6 +21,8 @@ const char* mode_name(Mode m) {
     case Mode::Wfm: return "wfm";
     case Mode::Nfm: return "nfm";
     case Mode::Am: return "am";
+    case Mode::Usb: return "usb";
+    case Mode::Lsb: return "lsb";
     default: return "off";
     }
 }
@@ -60,6 +64,8 @@ template class FirDecim<float>;
 namespace {
 
 const double kAudioTarget = 32000;
+// A sideband is taken as 200-3000 Hz from the carrier: centre 1600, half-width 1400.
+const double kSsbCentre = 1600, kSsbHalfWidth = 1400;
 
 struct Plan {
     int chan_decim, audio_decim;
@@ -77,7 +83,7 @@ Plan make_plan(Mode mode, double rate) {
     } else {
         p.audio_decim = 1;
         p.chan_decim = total;
-        p.chan_cutoff_hz = mode == Mode::Nfm ? 6e3 : 5e3;
+        p.chan_cutoff_hz = mode == Mode::Am ? 5e3 : 6e3;
     }
     p.chan_rate = rate / p.chan_decim;
     return p;
@@ -95,19 +101,51 @@ Demod::Demod(Mode mode, double rate)
       audio_rate_(make_plan(mode, rate).chan_rate / make_plan(mode, rate).audio_decim),
       channel_(channel_filter(make_plan(mode, rate), rate)),
       audio_(make_plan(mode, rate).audio_decim, 15e3 / make_plan(mode, rate).chan_rate,
-             make_plan(mode, rate).audio_decim == 1 ? 1 : 6 * make_plan(mode, rate).audio_decim + 1) {
+             make_plan(mode, rate).audio_decim == 1 ? 1 : 6 * make_plan(mode, rate).audio_decim + 1),
+      sideband_(1, kSsbHalfWidth / audio_rate_, mode == Mode::Usb || mode == Mode::Lsb ? 257 : 1) {
     Plan p = make_plan(mode, rate);
     // Full deviation (75 kHz broadcast, 5 kHz narrow) maps to full scale.
     double deviation = mode == Mode::Wfm ? 75e3 : 5e3;
     fm_gain_ = float(p.chan_rate / (2 * M_PI * deviation));
     // 75 microsecond de-emphasis (Americas, Korea). Europe uses 50; to be a setting.
     deemph_a_ = float(1 - std::exp(-1.0 / (audio_rate_ * 75e-6)));
+    if (mode == Mode::Usb || mode == Mode::Lsb) {
+        double sign = mode == Mode::Usb ? 1 : -1;
+        double a = -sign * 2 * M_PI * kSsbCentre / audio_rate_, b = -a;
+        pre_step_ = cf32(float(std::cos(a)), float(std::sin(a)));
+        post_step_ = cf32(float(std::cos(b)), float(std::sin(b)));
+    }
 }
 
 void Demod::run(const cf32* in, size_t n, std::vector<int16_t>& out) {
     chan_buf_.clear();
-    channel_.run(in, n, chan_buf_);
     audio_buf_.clear();
+    if (mode_ == Mode::Usb || mode_ == Mode::Lsb) {
+        channel_.run(in, n, chan_buf_);
+        mix_buf_.clear();
+        for (const cf32& s : chan_buf_) {
+            mix_buf_.push_back(s * pre_);
+            pre_ *= pre_step_;
+        }
+        side_buf_.clear();
+        sideband_.run(mix_buf_.data(), mix_buf_.size(), side_buf_);
+        for (const cf32& s : side_buf_) {
+            float v = (s * post_).real();
+            post_ *= post_step_;
+            // Level the volume: quick to turn down, slow to turn up.
+            float mag = std::fabs(v);
+            ssb_level_ += (mag - ssb_level_) * (mag > ssb_level_ ? 0.05f : 0.0005f);
+            audio_buf_.push_back(ssb_level_ > 1e-7f ? 0.35f * v / ssb_level_ : 0);
+        }
+        // The rotating phases drift off unit length; pull them back now and then.
+        if (++renorm_ % 16 == 0) {
+            pre_ /= std::abs(pre_);
+            post_ /= std::abs(post_);
+        }
+        for (float v : audio_buf_) out.push_back(int16_t(std::clamp(v, -1.0f, 1.0f) * 32000));
+        return;
+    }
+    channel_.run(in, n, chan_buf_);
 
     if (mode_ == Mode::Am) {
         for (const cf32& s : chan_buf_) {

@@ -166,6 +166,8 @@ static void test_demod() {
         {Mode::Nfm, 162.55e6, 1.024e6, 700},   // narrow FM
         {Mode::Nfm, 162.55e6, 2.048e6, 700},
         {Mode::Am, 121.5e6, 1.024e6, 1000},    // airband AM
+        {Mode::Usb, 14.2e6, 1.024e6, 700},     // upper sideband: tones 700 and 1900 Hz above the dial
+        {Mode::Lsb, 7.15e6, 250e3, 700},       // lower sideband
     };
     for (const Case& c : cases) {
         std::string err;
@@ -185,6 +187,36 @@ static void test_demod() {
         double level = rms(pcm, pcm.size() / 2);
         CHECK(level > 0.1 && level < 0.9);   // audible, not clipped
     }
+
+    // The wrong sideband is rejected. Input: a strong tone 700 Hz below the
+    // dial and one 20 dB weaker 1000 Hz above it. On USB the weak wanted tone
+    // must still come out at least 25 dB above what leaks of the strong one,
+    // which makes the rejection at least 45 dB.
+    const double rate = 1.024e6;
+    Demod demod(Mode::Usb, rate);
+    std::vector<cf32> block(4096);
+    std::vector<int16_t> pcm;
+    double t = 0;
+    while (pcm.size() < 16000) {
+        for (cf32& v : block) {
+            double a = -2 * M_PI * 700 * t, b = 2 * M_PI * 1000 * t;
+            v = cf32(float(0.1 * std::cos(a) + 0.01 * std::cos(b)), float(0.1 * std::sin(a) + 0.01 * std::sin(b)));
+            t += 1 / rate;
+        }
+        demod.run(block.data(), block.size(), pcm);
+    }
+    const size_t n = 8192;
+    Spectrum sp(n);
+    std::vector<cf32> v(n);
+    for (size_t i = 0; i < n; ++i) v[i] = cf32(pcm[pcm.size() - n + i] / 32768.0f, 0);
+    sp.add(v.data());
+    auto out = sp.take();
+    auto at = [&](double hz) {
+        size_t bin = n / 2 + size_t(hz * n / demod.audio_rate() + 0.5);
+        return std::max({out[bin - 1], out[bin], out[bin + 1]});
+    };
+    if (at(1000) - at(700) < 25) std::fprintf(stderr, "wanted %.1f dB, leak %.1f dB\n", at(1000), at(700));
+    CHECK(at(1000) - at(700) > 25);
 }
 
 static void test_json() {
