@@ -12,6 +12,7 @@ bool parse_mode(const std::string& s, Mode& out) {
     else if (s == "am") out = Mode::Am;
     else if (s == "usb") out = Mode::Usb;
     else if (s == "lsb") out = Mode::Lsb;
+    else if (s == "cw") out = Mode::Cw;
     else return false;
     return true;
 }
@@ -23,6 +24,7 @@ const char* mode_name(Mode m) {
     case Mode::Am: return "am";
     case Mode::Usb: return "usb";
     case Mode::Lsb: return "lsb";
+    case Mode::Cw: return "cw";
     default: return "off";
     }
 }
@@ -66,6 +68,10 @@ namespace {
 const double kAudioTarget = 32000;
 // A sideband is taken as 200-3000 Hz from the carrier: centre 1600, half-width 1400.
 const double kSsbCentre = 1600, kSsbHalfWidth = 1400;
+// Morse: keep 250 Hz either side of the tuned frequency and play it at this pitch.
+const double kCwPitch = 700, kCwHalfWidth = 250;
+
+bool is_sideband(Mode m) { return m == Mode::Usb || m == Mode::Lsb || m == Mode::Cw; }
 
 struct Plan {
     int chan_decim, chan2_decim, audio_decim;
@@ -115,16 +121,19 @@ Demod::Demod(Mode mode, double rate)
       channel2_(channel2_filter(make_plan(mode, rate), rate)),
       audio_(make_plan(mode, rate).audio_decim, 15e3 / make_plan(mode, rate).chan_rate,
              make_plan(mode, rate).audio_decim == 1 ? 1 : 6 * make_plan(mode, rate).audio_decim + 1),
-      sideband_(1, kSsbHalfWidth / audio_rate_, mode == Mode::Usb || mode == Mode::Lsb ? 257 : 1) {
+      sideband_(1, (mode == Mode::Cw ? kCwHalfWidth : kSsbHalfWidth) / audio_rate_, is_sideband(mode) ? 257 : 1) {
     Plan p = make_plan(mode, rate);
     // Full deviation (75 kHz broadcast, 5 kHz narrow) maps to full scale.
     double deviation = mode == Mode::Wfm ? 75e3 : 5e3;
     fm_gain_ = float(p.chan_rate / (2 * M_PI * deviation));
     // 75 microsecond de-emphasis (Americas, Korea). Europe uses 50; to be a setting.
     deemph_a_ = float(1 - std::exp(-1.0 / (audio_rate_ * 75e-6)));
-    if (mode == Mode::Usb || mode == Mode::Lsb) {
-        double sign = mode == Mode::Usb ? 1 : -1;
-        double a = -sign * 2 * M_PI * kSsbCentre / audio_rate_, b = -a;
+    if (is_sideband(mode)) {
+        // Shift the wanted slice to the middle by `a` a sample, and back out
+        // to its audio pitch by `b`.
+        double sign = mode == Mode::Lsb ? -1 : 1;
+        double a = mode == Mode::Cw ? 0 : -sign * 2 * M_PI * kSsbCentre / audio_rate_;
+        double b = mode == Mode::Cw ? 2 * M_PI * kCwPitch / audio_rate_ : -a;
         pre_step_ = cf32(float(std::cos(a)), float(std::sin(a)));
         post_step_ = cf32(float(std::cos(b)), float(std::sin(b)));
     }
@@ -139,7 +148,7 @@ void Demod::run_channel(const cf32* in, size_t n) {
 void Demod::run(const cf32* in, size_t n, std::vector<int16_t>& out) {
     chan_buf_.clear();
     audio_buf_.clear();
-    if (mode_ == Mode::Usb || mode_ == Mode::Lsb) {
+    if (is_sideband(mode_)) {
         run_channel(in, n);
         mix_buf_.clear();
         for (const cf32& s : chan_buf_) {

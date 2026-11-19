@@ -11,10 +11,11 @@ namespace zrf {
 
 using cf32 = std::complex<float>;
 
-enum class Mode { Off, Wfm, Nfm, Am, Usb, Lsb };
+enum class Mode { Off, Wfm, Nfm, Am, Usb, Lsb, Cw };
 
 // "off", "wfm" (broadcast FM), "nfm" (narrow FM), "am", "usb", "lsb"
-// (upper and lower sideband). False if unknown.
+// (upper and lower sideband), "cw" (Morse: a carrier on the tuned frequency
+// is heard as a 700 Hz tone). False if unknown.
 bool parse_mode(const std::string& s, Mode& out);
 const char* mode_name(Mode m);
 

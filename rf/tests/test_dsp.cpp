@@ -169,6 +169,7 @@ static void test_demod() {
         {Mode::Am, 121.5e6, 1.024e6, 1000},    // airband AM
         {Mode::Usb, 14.2e6, 1.024e6, 700},     // upper sideband: tones 700 and 1900 Hz above the dial
         {Mode::Lsb, 7.15e6, 250e3, 700},       // lower sideband
+        {Mode::Cw, 121.5e6, 1.024e6, 700},     // a carrier on the dial is a 700 Hz tone; its 1 kHz sidebands are filtered off
     };
     for (const Case& c : cases) {
         std::string err;

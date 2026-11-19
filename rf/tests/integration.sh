@@ -38,6 +38,24 @@ col=$("$BIN/zrf" peak 320 | field col)
 [ "$col" -ge 140 ] && [ "$col" -le 180 ] || fail "peak at column $col with offset, expected near 160"
 "$BIN/zrf" send offset 0 >/dev/null
 
+# Frequency correction: a receiver whose crystal is 50 ppm fast puts the
+# 162.55 MHz signal 8 kHz (about 10 columns) off until it is corrected.
+ZRF_SIM_PPM_ERROR=50 "$BIN/zrfd" --source sim --socket "$DIR/ppm.sock" &
+PPM=$!
+for _ in $(seq 50); do [ -S "$DIR/ppm.sock" ] && break; sleep 0.1; done
+Z="$BIN/zrf --socket $DIR/ppm.sock"
+$Z send tune 162550000 >/dev/null; $Z send rate 250000 >/dev/null
+off=$($Z peak 320 | field col)
+$Z send ppm 50 >/dev/null
+on=$($Z peak 320 | field col)
+kill "$PPM"; wait "$PPM" || true
+[ "$on" -ge 150 ] && [ "$on" -le 170 ] || fail "corrected peak at column $on, expected near 160"
+[ $((off - on)) -ge 4 ] || [ $((on - off)) -ge 4 ] || fail "correction made no difference (columns $off and $on)"
+"$BIN/zrf" send ppm 2.5 >/dev/null && fail "accepted a fractional ppm"
+"$BIN/zrf" send biastee maybe >/dev/null && fail "accepted a bad biastee value"
+"$BIN/zrf" send biastee on >/dev/null || fail "biastee on refused"
+"$BIN/zrf" send biastee off >/dev/null
+
 # Bad input is refused, not applied.
 "$BIN/zrf" send tune banana >/dev/null && fail "accepted a bad frequency"
 "$BIN/zrf" send spectrum 5000 >/dev/null && fail "accepted too many columns"

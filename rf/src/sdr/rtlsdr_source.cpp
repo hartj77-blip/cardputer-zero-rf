@@ -43,6 +43,13 @@ public:
         return rtlsdr_set_tuner_gain(dev_, nearest_gain(int(*db * 10))) == 0;   // tenths of a dB
     }
 
+    bool set_ppm(int ppm) override {
+        if (!dev_) return false;
+        // The library reports an error when the value is already set.
+        return rtlsdr_get_freq_correction(dev_) == ppm || rtlsdr_set_freq_correction(dev_, ppm) == 0;
+    }
+    bool set_bias_tee(bool on) override { return dev_ && rtlsdr_set_bias_tee(dev_, on ? 1 : 0) == 0; }
+
     size_t read(cf32* out, size_t n) override {
         if (!dev_) return 0;
         for (size_t i = 0; i < n; ++i) {
