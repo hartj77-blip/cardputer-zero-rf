@@ -5,6 +5,7 @@
 //   zrf peak [cols]                strongest column of one spectrum frame
 //   zrf watch [cols]               live spectrum, one text line per frame
 //   zrf listen <wfm|nfm|am> [seconds]   play audio until stopped (or for N seconds)
+//   zrf sensors [seconds]               print decoded sensor messages (rtl_433 JSON)
 //   zrf snapshot <out.ppm> [cols] [rows]   spectrum + waterfall picture
 #include <algorithm>
 #include <cstdio>
@@ -137,6 +138,7 @@ int usage() {
                  "       zrf [--socket <path>] peak [cols]\n"
                  "       zrf [--socket <path>] watch [cols]\n"
                  "       zrf [--socket <path>] listen <wfm|nfm|am> [seconds]\n"
+                 "       zrf [--socket <path>] sensors [seconds]\n"
                  "       zrf [--socket <path>] snapshot <out.ppm> [cols] [rows]\n");
     return 2;
 }
@@ -169,7 +171,12 @@ int main(int argc, char** argv) {
         Frame f;
         if (!subscribe(cols) || !read_frame(f) || !read_frame(f)) return 1;   // skip the first frame after a retune
         size_t best = size_t(std::max_element(f.cols.begin(), f.cols.end()) - f.cols.begin());
-        double hz = f.freq + (double(best) + 0.5 - cols / 2.0) * f.rate / cols;
+        // A wide signal's strongest column wanders; report the middle of
+        // everything within 6 dB of it instead.
+        size_t lo = best, hi = best;
+        while (lo > 0 && f.cols[lo - 1] + 12 >= f.cols[best]) --lo;
+        while (hi + 1 < f.cols.size() && f.cols[hi + 1] + 12 >= f.cols[best]) ++hi;
+        double hz = f.freq + ((lo + hi) / 2.0 + 0.5 - cols / 2.0) * f.rate / cols;
         std::printf("col=%zu db=%.1f hz=%.0f\n", best, byte_to_db(f.cols[best]), hz);
         return 0;
     }
@@ -197,6 +204,18 @@ int main(int argc, char** argv) {
         std::string line;
         for (int waited = 0; seconds == 0 || waited < seconds * 10; ++waited)
             if (read_line(line, 100) && line.rfind("E ", 0) == 0) std::fprintf(stderr, "zrf: %s\n", line.c_str() + 2);
+        return 0;
+    }
+    if (cmd == "sensors") {
+        int seconds = int_arg(0);
+        std::string reply, line;
+        if (!send_line("decode sensors") || !read_line(reply)) return 1;
+        if (reply.rfind("ok", 0) != 0) { std::fprintf(stderr, "zrf: %s\n", reply.c_str()); return 1; }
+        for (int waited = 0; seconds == 0 || waited < seconds * 10; ++waited) {
+            if (!read_line(line, 100)) continue;
+            if (line.rfind("D ", 0) == 0) { std::printf("%s\n", line.c_str() + 2); std::fflush(stdout); }
+            else if (line.rfind("E ", 0) == 0) std::fprintf(stderr, "zrf: %s\n", line.c_str() + 2);
+        }
         return 0;
     }
     if (cmd == "snapshot") {

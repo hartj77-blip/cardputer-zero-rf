@@ -11,10 +11,8 @@
 #include <string>
 #include <vector>
 
-#include <unistd.h>
-
 #include "apps/common.h"
-#include "client.h"
+#include "apps/radio_link.h"
 
 namespace zs {
 namespace {
@@ -152,25 +150,12 @@ public:
 private:
     // Runs every 40 ms: keep the connection up and draw what has arrived.
     void pump() {
-        // The headless build's clock is not real time, so wait for the daemon
-        // there; everywhere else never block the UI.
-        static const bool headless = std::strcmp(ZS_BACKEND_NAME, "headless") == 0;
-
-        if (!client_.connected()) {
-            if (retry_in_ > 0) { --retry_in_; return; }
-            if (!client_.connect()) {
-                if (!spawned_) {
-                    const char* src = std::getenv("ZRF_SOURCE");
-                    bool device = std::strcmp(ZS_BACKEND_NAME, "device") == 0;
-                    spawned_ = zrf::spawn_daemon(src && *src ? src : device ? "rtlsdr" : "sim");
-                } else if (++failures_ > 10) {
-                    set_message("Radio service not available");
-                }
-                if (headless) usleep(50 * 1000);
-                retry_in_ = headless ? 0 : 6;
-                return;
-            }
-            failures_ = 0;
+        bool fresh, unavailable;
+        if (!link_.ensure(fresh, unavailable)) {
+            if (unavailable) set_message("Radio service not available");
+            return;
+        }
+        if (fresh) {
             client_.send(fmt("rate %.0f", kSpans[span_]));
             send_gain();
             client_.send(fmt("tune %.0f", freq_));
@@ -178,15 +163,15 @@ private:
             if (mode_) client_.send(std::string("mode ") + kModes[mode_]);
         }
 
-        std::vector<zrf::SpectrumFrame> frames;
-        std::string error = error_;
-        if (!client_.poll(headless ? 100 : 0, frames, error)) {
-            spawned_ = false;   // the daemon went away; start it again
+        zrf::RadioEvents ev;
+        if (!client_.poll(RadioLink::poll_wait_ms(), ev)) {
+            link_.lost();
             set_message("Radio stopped. Restarting...");
             return;
         }
-        if (error != error_) {
-            error_ = error;
+        auto& frames = ev.frames;
+        if (ev.has_error && ev.error != error_) {
+            error_ = ev.error;
             if (error_ == "audio output failed") shell_toast("No audio output");
             else if (error_ == "no dongle") set_message("No radio found.\nPlug in an SDR dongle.");
             else if (!error_.empty()) set_message(("Radio: " + error_).c_str());
@@ -199,7 +184,8 @@ private:
             drew = true;
         }
         if (drew) {
-            if (error_.empty()) set_message("");
+            error_.clear();
+            set_message("");
             draw_trace();
             lv_obj_invalidate(canvas_);
         }
@@ -307,7 +293,8 @@ private:
         lv_label_set_text(hint_label_, entry_.empty() ? "0-9 go to  Z X span  M listen" : "Enter go   Esc cancel");
     }
 
-    zrf::RadioClient client_;
+    RadioLink link_;
+    zrf::RadioClient& client_ = link_.client;
     lv_timer_t* timer_ = nullptr;
     lv_obj_t *canvas_ = nullptr, *freq_label_ = nullptr, *info_label_ = nullptr, *message_ = nullptr;
     lv_obj_t *low_label_ = nullptr, *high_label_ = nullptr, *hint_label_ = nullptr;
@@ -317,8 +304,7 @@ private:
     float floor_ = -1;
     double freq_ = 98.3e6;
     int step_ = 2, span_ = 1, gain_ = 0, mode_ = 0;
-    bool peak_hold_ = false, spawned_ = false;
-    int retry_in_ = 0, failures_ = 0;
+    bool peak_hold_ = false;
     std::string entry_, error_;
 };
 }  // namespace

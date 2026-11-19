@@ -4,8 +4,9 @@ A radio-focused edition of [ZeroOS](https://github.com/hartj77-blip/cardputer-ze
 M5Stack Cardputer Zero **Lite**, built around a USB software-defined radio (SDR) dongle. The first
 supported dongle is the RTL-SDR Blog V4.
 
-Status: the radio core in `rf/` (spectrum, FM and AM listening) and the Spectrum app in `shell/`
-run against a simulated receiver.
+Status: the radio core in `rf/` (spectrum, FM and AM listening, sensor decoding) and the Spectrum
+and Sensors apps in `shell/` run against a simulated receiver. [BRINGUP.md](BRINGUP.md) is the
+first-run procedure for a real unit.
 Nothing has been tried on hardware.
 
 ## Goal

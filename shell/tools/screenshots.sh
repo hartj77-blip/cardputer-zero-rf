@@ -16,6 +16,8 @@ STEPS+=",right,right,right,right,wait:1500,shot:03-spectrum-retuned.ppm"
 STEPS+=",key:p,type:433.92,wait:300,shot:04-spectrum-goto.ppm"
 STEPS+=",enter,wait:5000,shot:05-spectrum-433.ppm"
 STEPS+=",type:162.55,enter,key:z,key:m,key:m,wait:4000,shot:06-spectrum-listening.ppm"
+STEPS+=",wait:4000,shot:07-sensors.ppm"
+STEPS+=",down,down,down,down,enter,wait:400,shot:08-sensors-detail.ppm"
 
 (cd "$OUT" && HOME="$DEMO" TZ=UTC ZRFD_SOCKET="$DEMO/zrfd.sock" ZRFD_BIN="$BUILD/rf/zrfd" ZRF_SOURCE=sim ZRF_AUDIO=none \
     "$BUILD/zeroshell" --script "$STEPS")

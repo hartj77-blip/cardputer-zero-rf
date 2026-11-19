@@ -47,7 +47,7 @@ void RadioClient::send(const std::string& line) {
     if (::send(fd_, out.data(), out.size(), MSG_NOSIGNAL) != ssize_t(out.size())) close();
 }
 
-bool RadioClient::poll(int wait_ms, std::vector<SpectrumFrame>& frames, std::string& error) {
+bool RadioClient::poll(int wait_ms, RadioEvents& ev) {
     if (fd_ < 0) return false;
     if (wait_ms > 0) {
         pollfd p{fd_, POLLIN, 0};
@@ -70,13 +70,16 @@ bool RadioClient::poll(int wait_ms, std::vector<SpectrumFrame>& frames, std::str
             SpectrumFrame f;
             std::string hex;
             if (is >> f.freq >> f.rate >> hex && from_hex(hex, f.cols)) {
-                frames.push_back(std::move(f));
-                error.clear();
+                ev.frames.push_back(std::move(f));
             }
+        } else if (line.rfind("D ", 0) == 0) {
+            ev.decoded.push_back(line.substr(2));
         } else if (line.rfind("E ", 0) == 0) {
-            error = line.substr(2);
+            ev.error = line.substr(2);
+            ev.has_error = true;
         } else if (line.rfind("err ", 0) == 0) {
-            error = line.substr(4);
+            ev.error = line.substr(4);
+            ev.has_error = true;
         }
     }
     return true;

@@ -12,6 +12,14 @@ struct SpectrumFrame {
     std::vector<uint8_t> cols;   // see proto.h for the level scale
 };
 
+// What the daemon has sent since the last poll.
+struct RadioEvents {
+    std::vector<SpectrumFrame> frames;
+    std::vector<std::string> decoded;   // decoder output lines (JSON from rtl_433)
+    std::string error;                  // latest problem reported; "" if none
+    bool has_error = false;
+};
+
 class RadioClient {
 public:
     ~RadioClient() { close(); }
@@ -21,9 +29,8 @@ public:
     void close();
     void send(const std::string& line);
     // Collect what the daemon has sent, waiting up to wait_ms for something
-    // to arrive. `error` is set to the latest problem the daemon reported.
-    // False if the connection is gone.
-    bool poll(int wait_ms, std::vector<SpectrumFrame>& frames, std::string& error);
+    // to arrive. False if the connection is gone.
+    bool poll(int wait_ms, RadioEvents& ev);
 
 private:
     int fd_ = -1;

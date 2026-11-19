@@ -65,3 +65,47 @@ jobs:
         with:
           name: screenshots
           path: build/screenshots
+
+  device:
+    name: Device kit (arm64)
+    runs-on: ubuntu-24.04-arm
+    env:
+      BASE_REPO_TOKEN: ${{ secrets.BASE_REPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch the base OS
+        id: base
+        run: |
+          if git submodule update --init --depth 1 base 2>/dev/null; then
+            echo "have=1" >> "$GITHUB_OUTPUT"
+          elif [ -n "$BASE_REPO_TOKEN" ]; then
+            auth=$(printf 'x-access-token:%s' "$BASE_REPO_TOKEN" | base64 -w0)
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
+              submodule update --init --depth 1 base
+            echo "have=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::BASE_REPO_TOKEN is not set: the kit holds the radio programs only, without the home screen."
+            echo "have=0" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config librtlsdr-dev
+      - name: Build radio programs and home screen
+        if: steps.base.outputs.have == '1'
+        run: |
+          cmake -S shell -B build/device -DZS_BACKEND=device -DCMAKE_CXX_FLAGS=-mcpu=cortex-a53 -DCMAKE_C_FLAGS=-mcpu=cortex-a53
+          cmake --build build/device -j"$(nproc)"
+          build/device/rf/test_dsp
+      - name: Build radio programs only
+        if: steps.base.outputs.have != '1'
+        run: |
+          cmake -S rf -B build/device -DCMAKE_CXX_FLAGS=-mcpu=cortex-a53
+          cmake --build build/device -j"$(nproc)"
+          build/device/test_dsp
+      - name: Pack the kit
+        run: tools/package-device.sh build/device build/zeroos-rf-arm64.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zeroos-rf-arm64
+          path: build/zeroos-rf-arm64.tar.gz

@@ -38,6 +38,9 @@ target_include_directories(zrfclient PUBLIC src)
 add_executable(zrfd src/zrfd.cpp)
 target_link_libraries(zrfd zrfcore)
 
+# Stands in for rtl_433 when the radio is simulated.
+add_executable(zrf-sim-sensors src/sim_sensors.cpp)
+
 add_executable(zrf src/zrf.cpp)
 target_include_directories(zrf PRIVATE src)
 
@@ -48,4 +51,4 @@ enable_testing()
 add_test(NAME dsp COMMAND test_dsp)
 add_test(NAME integration COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration.sh $<TARGET_FILE_DIR:zrfd>)
 
-install(TARGETS zrfd zrf RUNTIME DESTINATION bin)
+install(TARGETS zrfd zrf zrf-sim-sensors RUNTIME DESTINATION bin)

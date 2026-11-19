@@ -6,6 +6,7 @@
 
 #include "dsp/demod.h"
 #include "dsp/spectrum.h"
+#include "json_flat.h"
 #include "proto.h"
 #include "sdr/source.h"
 
@@ -186,6 +187,20 @@ static void test_demod() {
     }
 }
 
+static void test_json() {
+    auto f = parse_flat_json(R"({"model":"Acurite-Tower","id":11524,"temperature_C":21.3,"ok":true,)"
+                             R"("name":"a \"b\", c","rows":[{"len":3,"data":"a,b}"},[1,2]],"last":-4.5} )");
+    CHECK(f.size() == 7);
+    CHECK(*json_get(f, "model") == "Acurite-Tower" && *json_get(f, "id") == "11524");
+    CHECK(*json_get(f, "temperature_C") == "21.3" && *json_get(f, "ok") == "true");
+    CHECK(*json_get(f, "name") == "a \"b\", c");
+    CHECK(*json_get(f, "rows") == R"([{"len":3,"data":"a,b}"},[1,2]])");
+    CHECK(*json_get(f, "last") == "-4.5" && !json_get(f, "missing"));
+    CHECK(parse_flat_json("{}").empty() && parse_flat_json("").empty());
+    CHECK(parse_flat_json("not json").empty() && parse_flat_json(R"({"a":1)").empty());
+    CHECK(parse_flat_json(R"({"a" 1})").empty() && parse_flat_json(R"({"a":"unterminated})").empty());
+}
+
 int main() {
     test_fft();
     test_spectrum_level_and_position();
@@ -194,6 +209,7 @@ int main() {
     test_sim_source();
     test_file_source();
     test_demod();
+    test_json();
     std::puts("all DSP tests passed");
     return 0;
 }

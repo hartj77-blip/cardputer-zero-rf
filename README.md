@@ -10,7 +10,8 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 | Part | Status |
 | --- | --- |
 | `rf/` radio core: receiver backends, spectrum, FM and AM demodulation, the radio daemon `zrfd` and its protocol | Working against a simulated receiver and recorded files. Never run on a real dongle; audio checked by measurement, never by ear. |
-| `shell/` the base OS's ZeroShell plus the RF apps. First app: **Spectrum** | Working in the headless build. Never run on a device. |
+| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum** and **Sensors** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
+| `device/` the kit for a real unit: installer and first-run check | Dry-run against the simulated radio only. See [docs/BRINGUP.md](docs/BRINGUP.md). |
 | `base/` the base OS, [cardputer-zero](https://github.com/hartj77-blip/cardputer-zero), pinned as a submodule | Unchanged; we build on it, we don't fork it |
 | Image (SD card) build with the SDR packages | Not started |
 
@@ -20,6 +21,27 @@ Left/Right tune by one step, Up/Down change the step size, **Z**/**X** narrow or
 **G** cycles gain, **P** toggles peak hold, **C** centres on the strongest signal. **M** cycles
 listening: off, broadcast FM, narrow FM, AM. Type a frequency in MHz and press **Enter** to jump
 to it. Audio stops when you leave the app.
+
+## Sensors
+
+Wireless weather stations, tyre sensors, doorbells and remotes, decoded by
+[rtl_433](https://github.com/merbanan/rtl_433). One row per device with its latest readings.
+**Enter** shows everything the selected device sent, **F** changes band (433.92, 315, 868.3,
+915 MHz), **C** clears the list. Readings are metric for now.
+
+## On the device
+
+[docs/BRINGUP.md](docs/BRINGUP.md) walks through the first run on a real Cardputer Zero. Build
+the kit it uses with:
+
+```sh
+sudo apt install g++-aarch64-linux-gnu       # plus arm64 librtlsdr; CI builds on an arm64 runner instead
+cmake -S shell -B build/device -DZS_BACKEND=device -DCMAKE_TOOLCHAIN_FILE=$PWD/base/cmake/aarch64-linux-gnu.cmake
+cmake --build build/device -j
+STRIP=aarch64-linux-gnu-strip tools/package-device.sh build/device dist/zeroos-rf-arm64.tar.gz
+```
+
+CI's *Device kit (arm64)* job produces the same file as a downloadable artifact.
 
 ## Build and try on a PC
 
@@ -44,12 +66,13 @@ shell/tools/screenshots.sh build/headless build/screenshots
 ## CI and the private base
 
 The base repository is private, so CI here can't fetch it by default and the RF shell job skips
-with a warning. To turn it on, add a repository secret named `BASE_REPO_TOKEN` holding a
-fine-grained token with read-only Contents access to `cardputer-zero`. The radio core job needs no
-token.
+with a warning, and the device kit holds the radio programs without the home screen. To turn both
+on, add a repository secret named `BASE_REPO_TOKEN` holding a fine-grained token with read-only
+Contents access to `cardputer-zero`. The radio core job needs no token.
 
 ## Docs
 
 - [docs/PLAN.md](docs/PLAN.md): the architecture, the power, CPU and memory budget, the app list
   and the phases.
+- [docs/BRINGUP.md](docs/BRINGUP.md): first run on a real device, and what to send back.
 - [rf/README.md](rf/README.md): the radio core and the daemon's protocol.

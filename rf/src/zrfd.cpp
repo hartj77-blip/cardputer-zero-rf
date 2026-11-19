@@ -43,6 +43,7 @@ struct Settings {
     std::optional<double> gain;   // nullopt = automatic
     int fps = 15;
     Mode mode = Mode::Off;        // listening: demodulate the tuned frequency to audio
+    bool sensors = false;         // hand the receiver to the sensor decoder (rtl_433)
 };
 
 struct Shared {
@@ -60,6 +61,7 @@ struct Shared {
     uint64_t error_seq = 0;
     bool running = false;
     double audio_rate = 0;    // 0 when not listening
+    std::vector<std::string> decoded;   // decoder output lines not yet sent to clients
 };
 
 Shared g;
@@ -82,7 +84,10 @@ void report_error(const std::string& msg) {
 // Where demodulated audio goes: "none", "file:<path>" (raw 16-bit mono) or
 // "cmd:<shell command>" fed on its standard input, with %r replaced by the
 // sample rate.
-std::string g_audio_spec = "cmd:aplay -q -t raw -f S16_LE -c 1 -r %r";
+// Default: sox's play, which the base OS's Media app also uses; else aplay.
+std::string g_audio_spec =
+    "cmd:if command -v play >/dev/null; then exec play -q -t raw -r %r -e signed -b 16 -c 1 -; "
+    "else exec aplay -q -t raw -f S16_LE -c 1 -r %r; fi";
 
 class AudioSink {
 public:
@@ -96,14 +101,15 @@ public:
         }
         if (g_audio_spec.rfind("cmd:", 0) != 0) return false;
         std::string cmd = g_audio_spec.substr(4);
-        size_t at = cmd.find("%r");
-        if (at != std::string::npos) cmd.replace(at, 2, std::to_string(std::lround(rate)));
+        for (size_t at; (at = cmd.find("%r")) != std::string::npos;)
+            cmd.replace(at, 2, std::to_string(std::lround(rate)));
         int p[2];
         if (pipe2(p, O_CLOEXEC) != 0) return false;
         pid_ = fork();
         if (pid_ < 0) { ::close(p[0]); ::close(p[1]); return false; }
         if (pid_ == 0) {
             dup2(p[0], 0);
+            setpgid(0, 0);   // so close() can stop the shell and the player together
             execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
             _exit(127);
         }
@@ -125,6 +131,7 @@ public:
         if (fd_ >= 0) ::close(fd_);
         fd_ = -1;
         if (pid_ > 0) {
+            kill(-pid_, SIGTERM);
             kill(pid_, SIGTERM);
             waitpid(pid_, nullptr, 0);
         }
@@ -140,6 +147,97 @@ void notify(const std::string& msg) {
     g.error = msg;
     ++g.error_seq;
     wake_main();
+}
+
+// A decoder program run in place of our own DSP; we read its output lines.
+class Decoder {
+public:
+    ~Decoder() { stop(); }
+    bool running() const { return pid_ > 0; }
+    bool start(const std::string& cmd) {
+        stop();
+        int p[2];
+        if (pipe2(p, O_CLOEXEC) != 0) return false;
+        pid_ = fork();
+        if (pid_ < 0) { ::close(p[0]); ::close(p[1]); return false; }
+        if (pid_ == 0) {
+            dup2(p[1], 1);
+            setpgid(0, 0);
+            execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+            _exit(127);
+        }
+        ::close(p[1]);
+        fd_ = p[0];
+        buf_.clear();
+        started_ = std::chrono::steady_clock::now();
+        return true;
+    }
+    // Wait up to ms for output and split it into lines. False once the
+    // program has closed its output (it exited).
+    bool pump(int ms, std::vector<std::string>& lines) {
+        pollfd p{fd_, POLLIN, 0};
+        if (poll(&p, 1, ms) <= 0) return true;
+        char buf[4096];
+        ssize_t n = read(fd_, buf, sizeof buf);
+        if (n <= 0) return n < 0 && errno == EINTR;
+        buf_.append(buf, size_t(n));
+        size_t nl;
+        while ((nl = buf_.find('\n')) != std::string::npos) {
+            if (nl > 0) lines.push_back(buf_.substr(0, nl));
+            buf_.erase(0, nl + 1);
+        }
+        if (buf_.size() > 65536) buf_.clear();
+        return true;
+    }
+    // Returns the program's exit code, or -1 if it had to be stopped.
+    int stop() {
+        int code = -1;
+        if (fd_ >= 0) ::close(fd_);
+        fd_ = -1;
+        if (pid_ > 0) {
+            int status = 0;
+            if (waitpid(pid_, &status, WNOHANG) == pid_) {
+                if (WIFEXITED(status)) code = WEXITSTATUS(status);
+            } else {
+                kill(-pid_, SIGTERM);
+                kill(pid_, SIGTERM);
+                waitpid(pid_, &status, 0);
+            }
+        }
+        pid_ = -1;
+        return code;
+    }
+    double seconds_running() const {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count();
+    }
+private:
+    int fd_ = -1;
+    pid_t pid_ = -1;
+    std::string buf_;
+    std::chrono::steady_clock::time_point started_;
+};
+
+std::string shell_quote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) out += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    return out + "'";
+}
+
+// The sensor decoder for this kind of receiver. rtl_433 opens the dongle
+// itself, which is why ours must be closed first.
+std::string sensors_command(const std::string& spec, double freq) {
+    if (const char* c = std::getenv("ZRF_SENSORS_CMD")) return c;
+    const std::string opts = " -F json -M level -C si 2>/dev/null";
+    if (spec == "sim") {
+        char self[512];
+        ssize_t n = readlink("/proc/self/exe", self, sizeof self - 1);
+        std::string dir = n > 0 ? std::string(self, size_t(n)) : "";
+        dir = dir.substr(0, dir.rfind('/') + 1);
+        return "exec " + shell_quote(dir + "zrf-sim-sensors");
+    }
+    if (spec.rfind("file:", 0) == 0) return "exec rtl_433 -r " + shell_quote(spec.substr(5)) + opts;
+    std::string index = spec.size() > 7 ? std::to_string(std::atoi(spec.c_str() + 7)) : "0";
+    return "exec rtl_433 -d " + index + " -f " + std::to_string(std::llround(freq)) + opts;
 }
 
 bool apply(Source& src, const Settings& s, std::string& err) {
@@ -168,6 +266,9 @@ void worker(std::string spec) {
     };
     size_t since_frame = 0;
     int ffts = 0;
+    Decoder decoder;
+    double decoder_freq = 0;
+    std::vector<std::string> lines;
 
     for (;;) {
         {
@@ -181,9 +282,58 @@ void worker(std::string spec) {
                 demod_mode = Mode::Off;
                 g.audio_rate = 0;
                 g.running = false;
+                lk.unlock();
+                decoder.stop();
+                lk.lock();
                 g.cv.wait(lk, [] { return g.stop || g.subscribers > 0; });
                 continue;
             }
+        }
+        bool want_sensors;
+        double want_freq;
+        {
+            std::lock_guard<std::mutex> lk(g.mu);
+            want_sensors = g.want.sensors;
+            want_freq = g.want.freq;
+        }
+        if (want_sensors) {
+            // The decoder needs the receiver to itself.
+            if (src) { src.reset(); stop_audio(); }
+            if (!decoder.running() || decoder_freq != want_freq) {
+                if (!decoder.start(sensors_command(spec, want_freq))) {
+                    report_error("can't start the decoder");
+                    std::unique_lock<std::mutex> lk(g.mu);
+                    g.cv.wait_for(lk, std::chrono::seconds(2), [] { return g.stop || g.subscribers == 0; });
+                    continue;
+                }
+                decoder_freq = want_freq;
+                std::lock_guard<std::mutex> lk(g.mu);
+                g.running = true;
+                g.error.clear();
+            }
+            lines.clear();
+            bool alive = decoder.pump(200, lines);
+            if (!lines.empty()) {
+                std::lock_guard<std::mutex> lk(g.mu);
+                for (auto& l : lines)
+                    if (g.decoded.size() < 500) g.decoded.push_back(std::move(l));
+                wake_main();
+            }
+            if (!alive) {
+                double ran = decoder.seconds_running();
+                int code = decoder.stop();
+                // rtl_433 gives up at once when it finds no dongle.
+                bool dongle = spec.rfind("rtlsdr", 0) == 0;
+                report_error(code == 127 ? "rtl_433 is not installed" : dongle && ran < 5 ? "no dongle" : "decoder stopped");
+                std::unique_lock<std::mutex> lk(g.mu);
+                g.cv.wait_for(lk, std::chrono::seconds(2), [] { return g.stop || g.subscribers == 0 || !g.want.sensors; });
+            }
+            continue;
+        }
+        if (decoder.running()) {
+            decoder.stop();
+            std::lock_guard<std::mutex> lk(g.mu);
+            g.dirty = true;
         }
         if (!src) {
             std::string err;
@@ -263,6 +413,7 @@ struct Client {
     std::string in, out;
     size_t cols = 0;   // 0 = not subscribed to the spectrum
     bool listening = false;   // asked for audio; it stops when this client leaves
+    bool decoding = false;    // asked for decoder output; same rule
 };
 
 void change_subscribers(int delta) {
@@ -333,13 +484,21 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
         update([&](Settings& s) { s.mode = m; });
         return "ok";
     }
+    if (cmd == "decode") {
+        if (arg != "sensors" && arg != "off") return "err decode needs sensors or off";
+        bool on = arg == "sensors";
+        if (on != c.decoding) change_subscribers(c.decoding ? -1 : +1);
+        c.decoding = on;
+        update([&](Settings& s) { s.sensors = on; });
+        return "ok";
+    }
     if (cmd == "status") {
         std::lock_guard<std::mutex> lk(g.mu);
         char buf[320];
-        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s fps=%d mode=%s audio_rate=%.0f running=%d source=%s",
+        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s fps=%d mode=%s audio_rate=%.0f decode=%s running=%d source=%s",
                       g.want.freq, g.want.offset, g.want.rate,
                       g.want.gain ? std::to_string(*g.want.gain).c_str() : "auto", g.want.fps,
-                      mode_name(g.want.mode), g.audio_rate, g.running ? 1 : 0, spec.c_str());
+                      mode_name(g.want.mode), g.audio_rate, g.want.sensors ? "sensors" : "off", g.running ? 1 : 0, spec.c_str());
         std::string out = buf;
         if (!g.error.empty()) out += " error=" + g.error;
         return out;
@@ -420,14 +579,18 @@ int main(int argc, char** argv) {
             std::vector<float> frame;
             double freq = 0, rate = 0;
             std::string error;
+            std::vector<std::string> decoded;
             {
                 std::lock_guard<std::mutex> lk(g.mu);
+                decoded.swap(g.decoded);
                 if (g.seq != sent_seq) { frame = g.frame; freq = g.frame_freq; rate = g.frame_rate; sent_seq = g.seq; }
                 if (g.error_seq != sent_error_seq) { error = g.error; sent_error_seq = g.error_seq; }
             }
             for (auto& [fd, c] : clients) {
-                if ((!c.cols && !c.listening) || c.out.size() > kMaxQueued) continue;
+                if ((!c.cols && !c.listening && !c.decoding) || c.out.size() > kMaxQueued) continue;
                 if (!error.empty()) c.out += "E " + error + "\n";
+                if (c.decoding)
+                    for (auto& l : decoded) c.out += "D " + l + "\n";
                 if (frame.empty() || !c.cols) continue;
                 std::vector<float> cols = reduce_peak(frame, c.cols);
                 std::vector<uint8_t> bytes(cols.size());
@@ -466,8 +629,9 @@ int main(int argc, char** argv) {
         }
         for (int fd : dead) {
             if (clients[fd].cols) change_subscribers(-1);
-            bool was_listening = clients[fd].listening;
+            bool was_listening = clients[fd].listening, was_decoding = clients[fd].decoding;
             if (was_listening) change_subscribers(-1);
+            if (was_decoding) change_subscribers(-1);
             close(fd);
             clients.erase(fd);
             if (was_listening) {
@@ -475,6 +639,11 @@ int main(int argc, char** argv) {
                 bool others = false;
                 for (auto& [other_fd, other] : clients) others = others || other.listening;
                 if (!others) update([](Settings& s) { s.mode = Mode::Off; });
+            }
+            if (was_decoding) {
+                bool others = false;
+                for (auto& [other_fd, other] : clients) others = others || other.decoding;
+                if (!others) update([](Settings& s) { s.sensors = false; });
             }
             last_client = std::chrono::steady_clock::now();
         }

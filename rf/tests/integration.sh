@@ -58,6 +58,22 @@ bytes=$(stat -c %s "$DIR/audio.raw")
 [ "$bytes" -ge 96000 ] && [ "$bytes" -le 150000 ] || fail "2 s of 32 kHz audio should be about 128000 bytes, got $bytes"
 "$BIN/zrf" send mode ssb >/dev/null && fail "accepted an unknown mode"
 
+# The sensor decoder's output reaches the client, and stops when it leaves.
+out=$("$BIN/zrf" sensors 2)
+echo "$out" | grep -q '"model":"Acurite-Tower"' || fail "no decoded sensor messages: $out"
+sleep 0.3
+[ "$("$BIN/zrf" send status | field decode)" = off ] || fail "still decoding after the client left"
+pgrep -f zrf-sim-sensors >/dev/null && fail "decoder program left running"
+# The spectrum comes back afterwards.
+"$BIN/zrf" send tune 98300000 >/dev/null
+"$BIN/zrf" peak 320 >/dev/null || fail "no spectrum after decoding"
+# A decoder that isn't installed is reported, not hidden.
+ZRF_SENSORS_CMD="exec no-such-decoder" "$BIN/zrfd" --source sim --socket "$DIR/alt.sock" &
+ALT=$!
+for _ in $(seq 50); do [ -S "$DIR/alt.sock" ] && break; sleep 0.1; done
+"$BIN/zrf" --socket "$DIR/alt.sock" sensors 1 2>&1 | grep -q "not installed" || fail "missing decoder not reported"
+kill "$ALT"; wait "$ALT" || true
+
 # After the last client leaves, the receiver is released again.
 sleep 0.3
 [ "$("$BIN/zrf" send status | field running)" = 0 ] || fail "receiver still open after clients left"

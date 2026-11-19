@@ -22,8 +22,10 @@ the base OS, so it builds and runs on any Linux PC.
 - Written but **never run on a real dongle**: the `rtlsdr` backend. It compiles in CI against
   librtlsdr; that is all.
 - **Never heard by a person**: audio is checked by measurement only. The default player command
-  (`aplay`) has not been tried on the device.
-- Not started: SSB, squelch, stereo and RDS, decoders, rig control.
+  has not been tried on the device.
+- Sensor decoding is tested with a stand-in for rtl_433 (`zrf-sim-sensors`); the real rtl_433 has
+  only been checked to accept our command line.
+- Not started: SSB, squelch, stereo and RDS, other decoders, rig control.
 
 ## Build and try
 
@@ -40,9 +42,10 @@ ctest --test-dir build/rf --output-on-failure
 ./build/rf/zrf watch                         # live spectrum as text; Ctrl-C to stop
 ./build/rf/zrf snapshot fm.ppm 320 100       # spectrum and waterfall picture
 ./build/rf/zrf listen wfm                    # play the tuned station; Ctrl-C to stop
+./build/rf/zrf sensors                       # decoded sensor messages as JSON lines
 ```
 
-Audio goes to `aplay` by default. Choose another output with `--audio` or `ZRF_AUDIO`:
+Audio goes to sox's `play` by default, or `aplay` if sox isn't installed. Choose another output with `--audio` or `ZRF_AUDIO`:
 `none`, `file:<path>` (raw 16-bit mono), or `cmd:<player command>` where `%r` becomes the sample
 rate, for example `cmd:pw-cat --playback --format s16 --channels 1 --rate %r -`.
 
@@ -73,14 +76,16 @@ Commands, each answered with `ok ...` or `err <reason>`:
 | `gain <db>` or `gain auto` | Tuner gain. |
 | `spectrum <cols> [fps]` | Subscribe to spectrum frames reduced to `cols` columns (1 to 1024), at up to 30 frames a second. |
 | `spectrum off` | Unsubscribe. |
+| `decode sensors` or `decode off` | Hand the receiver to rtl_433 at the tuned frequency and forward what it decodes. Spectrum and audio stop meanwhile: one program owns the dongle at a time. Ends when the client that asked leaves. |
 | `mode wfm`, `nfm`, `am` or `off` | Listen to the tuned frequency: broadcast FM, narrow FM, AM, or stop. Audio is mono at about 32 kHz. |
-| `status` | `ok freq=... offset=... rate=... gain=... fps=... mode=... audio_rate=... running=0|1 source=... [error=...]` |
+| `status` | `ok freq=... offset=... rate=... gain=... fps=... mode=... audio_rate=... decode=... running=0|1 source=... [error=...]` |
 
 Lines the daemon sends without being asked, to clients that are watching or listening:
 
 | Line | Meaning |
 | --- | --- |
 | `S <freq_hz> <rate_hz> <hex>` | One spectrum frame. Two hex digits per column, lowest frequency first, so `freq_hz` is the middle. Level in dB relative to full scale is `value * 0.5 - 120`. |
+| `D <json>` | One decoded message, exactly as rtl_433 printed it. |
 | `E <reason>` | The receiver can't be opened or stopped working (for example `no dongle`). The daemon retries every 2 seconds, so plugging a dongle in is enough. Also `audio output failed`. |
 
 A client that falls behind has frames dropped rather than queued.
