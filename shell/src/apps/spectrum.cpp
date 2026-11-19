@@ -3,9 +3,10 @@
 // Left/Right tune by one step, Up/Down change the step, Z/X narrow or widen
 // the view, G cycles gain, P toggles peak hold, C centres on the strongest
 // signal, M cycles listening (off, broadcast FM, narrow FM, AM, upper and
-// lower sideband), S toggles squelch, B opens the band list, R records raw
-// IQ to ~/Recordings. Type a frequency in MHz and press Enter to jump to it.
-// Audio and recording stop on leaving.
+// lower sideband, CW), S toggles squelch, B opens the band list, R records
+// raw IQ to ~/Recordings. F follows a transceiver's dial (set the rig up in
+// Station) and T sends this frequency to it. Type a frequency in MHz and
+// press Enter to jump to it. Audio and recording stop on leaving.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -19,6 +20,8 @@
 
 #include "apps/bands.h"
 #include "apps/radio_link.h"
+#include "apps/rig_link.h"
+#include "ui/prefs.h"
 
 namespace zs {
 namespace {
@@ -32,11 +35,11 @@ const int kCanvasH = kTraceH + kFallH;
 const int kRangeDb = 60;                   // shown above the noise floor
 
 const double kMinHz = 0.5e6, kMaxHz = 1766e6;   // RTL-SDR Blog V4 range
-const double kSteps[] = {100, 1e3, 10e3, 100e3, 1e6, 10e6};
+const double kSteps[] = {10, 100, 1e3, 10e3, 100e3, 1e6, 10e6};
 const double kSpans[] = {250e3, 1.024e6, 2.048e6};   // sample rates an RTL-SDR accepts
 const int kGains[] = {-1, 0, 10, 20, 30, 40};       // -1 = automatic
-const char* const kModes[] = {"off", "wfm", "nfm", "am", "usb", "lsb"};
-const char* const kModeNames[] = {"", "FM", "NFM", "AM", "USB", "LSB"};
+const char* const kModes[] = {"off", "wfm", "nfm", "am", "usb", "lsb", "cw"};
+const char* const kModeNames[] = {"", "FM", "NFM", "AM", "USB", "LSB", "CW"};
 const int kSquelchDb = 10;   // above the noise floor
 
 uint16_t rgb565(int r, int g, int b) { return uint16_t((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3)); }
@@ -140,9 +143,16 @@ public:
             send_gain();
             break;
         case 'm': case 'M':
-            // The first press picks the mode that suits the band chosen with B.
-            if (mode_ == 0 && band_mode_) { mode_ = band_mode_; band_mode_ = 0; }
-            else mode_ = (mode_ + 1) % int(std::size(kModes));
+            // The first press picks the mode that suits this frequency: the
+            // right sideband on an amateur band, AM on the airband, and so on.
+            if (mode_ == 0 && !mode_picked_) {
+                const char* m = suggested_mode(freq_);
+                for (int i = 1; i < int(std::size(kModes)); ++i)
+                    if (std::strcmp(kModes[i], m) == 0) mode_ = i;
+                mode_picked_ = true;
+            } else {
+                mode_ = (mode_ + 1) % int(std::size(kModes));
+            }
             client_.send(std::string("mode ") + kModes[mode_]);
             break;
         case 's': case 'S':
@@ -152,6 +162,21 @@ public:
             break;
         case 'b': case 'B': show_bands(true); return true;
         case 'r': case 'R': toggle_record(); break;
+        case 'f': case 'F':
+            if (rig_.active()) {
+                rig_.stop();
+                shell_toast("Stopped following the rig");
+            } else if (!RigLink::configured()) {
+                shell_toast("Set up your rig in Station first");
+            } else {
+                rig_.start();
+                shell_toast("Following the rig's dial");
+            }
+            break;
+        case 't': case 'T':
+            if (!rig_.active() || !rig_.connected()) shell_toast("Not connected to a rig (F to connect)");
+            else { rig_.set_freq(freq_); shell_toast(fmt("Rig set to %.5f MHz", freq_ / 1e6)); }
+            break;
         case LV_KEY_ENTER: return true;   // nothing to confirm; keep it from the hidden list
         case 'p': case 'P':
             peak_hold_ = !peak_hold_;
@@ -182,11 +207,23 @@ private:
     // Runs every 40 ms: keep the connection up and draw what has arrived.
     void pump() {
         bool fresh, unavailable;
+        // The rig's dial moves the display even while the radio is starting.
+        double rig_hz = 0;
+        bool rig_lost = false;
+        if (rig_.poll(rig_hz, rig_lost) && std::fabs(rig_hz - freq_) >= 1) tune(rig_hz);
+        if (rig_lost) {
+            rig_.stop();
+            shell_toast("Rig not answering. Check Station and the cable.");
+            update_labels();
+        }
         if (!link_.ensure(fresh, unavailable)) {
             if (unavailable) set_message("Radio service not available");
             return;
         }
         if (fresh) {
+            // Station settings: crystal correction and power for an antenna amplifier.
+            client_.send(fmt("ppm %d", prefs::get_int("rf.ppm", 0)));
+            client_.send(prefs::get_int("rf.biastee", 0) ? "biastee on" : "biastee off");
             if (recording_) {
                 // The radio service restarted; whatever was recording has stopped.
                 recording_ = false;
@@ -228,6 +265,11 @@ private:
             drew = true;
         }
         if (drew) {
+            // Strength of what is tuned in: the strongest of the middle few
+            // columns against the noise floor (levels are 0.5 dB steps).
+            uint8_t mid = *std::max_element(last_.begin() + kW / 2 - 3, last_.begin() + kW / 2 + 4);
+            signal_db_ = (mid - floor_) / 2;
+            if (mode_ && ++label_ticks_ % 8 == 0) update_labels();
             error_.clear();
             set_message("");
             draw_trace();
@@ -296,13 +338,17 @@ private:
         self->show_bands(false);
         self->set_span(b.span);
         self->tune(b.home);
-        // Remember how this band is listened to; switch at once if already listening.
-        for (int i = 0; i < int(std::size(kModes)); ++i)
-            if (std::strcmp(kModes[i], b.mode) == 0) self->band_mode_ = i;
-        if (self->mode_ && self->band_mode_) {
-            self->mode_ = self->band_mode_;
-            self->client_.send(std::string("mode ") + kModes[self->mode_]);
-        }
+        // A new band: the next M press picks its mode afresh; if already
+        // listening, switch to it at once.
+        self->mode_picked_ = false;
+        if (self->mode_)
+            for (int i = 1; i < int(std::size(kModes)); ++i)
+                if (std::strcmp(kModes[i], b.mode) == 0) {
+                    self->mode_ = i;
+                    self->client_.send(std::string("mode ") + kModes[i]);
+                }
+        // Sideband and Morse want fine tuning steps.
+        self->step_ = b.mode[0] == 'u' || b.mode[0] == 'l' || b.mode[0] == 'c' ? 2 : 4;
         self->update_labels();
     }
 
@@ -376,18 +422,26 @@ private:
         if (!entry_.empty()) {
             lv_label_set_text(freq_label_, ("Go to " + entry_ + "_ MHz").c_str());
         } else {
-            lv_label_set_text(freq_label_, fmt("%.4f MHz", freq_ / 1e6).c_str());
+            lv_label_set_text(freq_label_, fmt("%.5f MHz", freq_ / 1e6).c_str());
         }
         std::string gain = kGains[gain_] < 0 ? "auto" : fmt("%d dB", kGains[gain_]);
         std::string info = fmt("step %s", hz_text(kSteps[step_]).c_str());
         if (mode_) info += fmt("  " LV_SYMBOL_VOLUME_MAX " %s%s", kModeNames[mode_], squelch_ ? " SQ" : "");
         else info += fmt("  gain %s", gain.c_str());
         if (recording_) info = LV_SYMBOL_SAVE " REC  " + info;
+        if (rig_.active()) info = LV_SYMBOL_LOOP " " + info;
         lv_label_set_text(info_label_, info.c_str());
         double half = kSpans[span_] / 2;
         lv_label_set_text(low_label_, fmt("%.3f", (freq_ - half) / 1e6).c_str());
         lv_label_set_text(high_label_, fmt("%.3f", (freq_ + half) / 1e6).c_str());
-        lv_label_set_text(hint_label_, entry_.empty() ? "0-9 go to  B bands  M listen" : "Enter go   Esc cancel");
+        // Bottom line: the band we're in, then the signal strength while
+        // listening or the key hints otherwise.
+        const Band* band = band_at(freq_);
+        std::string hint = band ? std::string(band->name) + "   " : "";
+        if (!entry_.empty()) hint = "Enter go   Esc cancel";
+        else if (mode_ && signal_db_ > -100) hint += fmt("signal %+.0f dB", signal_db_);
+        else hint += band ? "B bands  M listen" : "0-9 go to  B bands  M listen";
+        lv_label_set_text(hint_label_, hint.c_str());
     }
 
     RadioLink link_;
@@ -400,7 +454,11 @@ private:
     std::vector<uint8_t> last_, peak_ = std::vector<uint8_t>(kW, 0);
     float floor_ = -1;
     double freq_ = 98.3e6;
-    int step_ = 3, span_ = 1, gain_ = 0, mode_ = 0, band_mode_ = 0;
+    int step_ = 4, span_ = 1, gain_ = 0, mode_ = 0;
+    bool mode_picked_ = false;
+    float signal_db_ = -200;   // tuned signal above the noise floor
+    int label_ticks_ = 0;
+    RigLink rig_;
     bool squelch_ = false, bands_open_ = false, recording_ = false;
     std::string record_name_;
     lv_obj_t* band_list_ = nullptr;

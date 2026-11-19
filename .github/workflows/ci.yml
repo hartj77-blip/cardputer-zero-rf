@@ -50,7 +50,7 @@ jobs:
           fi
       - name: Install dependencies
         if: steps.base.outputs.have == '1'
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libsdl2-dev librtlsdr-dev python3-pil
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libsdl2-dev librtlsdr-dev python3-pil libhamlib-utils
       - name: Build SDL simulator (compile check)
         if: steps.base.outputs.have == '1'
         run: cmake -S shell -B build/sim -DZS_BACKEND=sim && cmake --build build/sim -j"$(nproc)"

@@ -10,6 +10,7 @@ the base OS, so it builds and runs on any Linux PC.
 | `src/sdr/` | Receiver backends: `sim` (generated signals), `file:<path>` (IQ recording playback), `rtlsdr` (a real dongle). |
 | `src/dsp/` | FFT and power spectrum; demodulators for broadcast FM, narrow FM, AM and single sideband. |
 | `src/adsb.*` | Aircraft (ADS-B) frame decoding. |
+| `src/aprs.*` | APRS packet reading, grid locators, distance and bearing. |
 | `src/client.*` | The small client library the on-screen apps use. |
 
 ![Simulated FM broadcast band](../docs/screenshots/spectrum-fm.png)
@@ -24,11 +25,13 @@ the base OS, so it builds and runs on any Linux PC.
   librtlsdr; that is all.
 - **Never heard by a person**: audio is checked by measurement only. The default player command
   has not been tried on the device.
-- Sensor and aircraft decoding are tested with stand-ins (`zrf-sim-sensors`, `zrf-sim-aircraft`).
-  The real rtl_433 has only been checked to accept our command line; rtl_adsb, dump1090 and
-  rtl_tcp have not been run at all. The aircraft decoder itself is checked against published
+- Sensor, aircraft and APRS decoding are tested with stand-ins (`zrf-sim-sensors`,
+  `zrf-sim-aircraft`, `zrf-sim-aprs`). The real rtl_433 has only been checked to accept our
+  command line; rtl_adsb, dump1090, rtl_fm, multimon-ng and rtl_tcp have not been run at all. APRS
+  packet reading is checked against the examples in the APRS specification. The aircraft decoder itself is checked against published
   reference frames.
-- Not started: stereo and RDS, pager and ship decoders, rig control.
+- Not started: stereo and RDS, ship decoding, digital modes such as FT8. Pager decoding is left
+  out on purpose: pager messages are other people's private communications.
 
 ## Build and try
 
@@ -82,11 +85,13 @@ Commands, each answered with `ok ...` or `err <reason>`:
 | `gain <db>` or `gain auto` | Tuner gain. |
 | `spectrum <cols> [fps]` | Subscribe to spectrum frames reduced to `cols` columns (1 to 1024), at up to 30 frames a second. |
 | `spectrum off` | Unsubscribe. |
-| `decode sensors`, `aircraft`, `server` or `off` | Hand the receiver to another program and forward what it prints: rtl_433 at the tuned frequency (JSON), rtl_adsb or dump1090 (raw ADS-B frames), or rtl_tcp on port 1234 (its log). Spectrum and audio stop meanwhile: one program owns the dongle at a time. Ends when the client that asked leaves. |
-| `mode wfm`, `nfm`, `am`, `usb`, `lsb` or `off` | Listen to the tuned frequency: broadcast FM, narrow FM, AM, upper or lower sideband, or stop. Audio is mono at about 32 kHz. |
+| `decode sensors`, `aircraft`, `aprs`, `server` or `off` | Hand the receiver to another program and forward what it prints: rtl_433 at the tuned frequency (JSON), rtl_adsb or dump1090 (raw ADS-B frames), rtl_fm into multimon-ng at the tuned frequency (APRS packets), or rtl_tcp on port 1234 (its log). Spectrum and audio stop meanwhile: one program owns the dongle at a time. Ends when the client that asked leaves. |
+| `mode wfm`, `nfm`, `am`, `usb`, `lsb`, `cw` or `off` | Listen to the tuned frequency: broadcast FM, narrow FM, AM, upper or lower sideband, Morse (a carrier on the tuned frequency is a 700 Hz tone, 500 Hz wide), or stop. Audio is mono at about 32 kHz. |
+| `ppm <n>` | Correct the receiver's crystal error, in whole parts per million. |
+| `biastee on` or `off` | Power for an amplifier at the antenna, where the receiver has it. |
 | `squelch <db>` or `squelch off` | Mute audio unless the tuned signal is this many dB above the noise floor. |
 | `record <absolute path>` or `record off` | Write raw IQ (unsigned 8-bit pairs, `.cu8`) with a SigMF description beside it. Ends on retune, when storage is nearly full, or when the client that asked leaves. |
-| `status` | `ok freq=... offset=... rate=... gain=... fps=... mode=... audio_rate=... squelch=... signal=... open=0|1 decode=... recorded=... running=0|1 source=... [error=...]` |
+| `status` | `ok freq=... offset=... rate=... gain=... ppm=... biastee=... fps=... mode=... audio_rate=... squelch=... signal=... open=0|1 decode=... recorded=... running=0|1 source=... [error=...]` |
 
 Lines the daemon sends without being asked, to clients that are watching or listening:
 

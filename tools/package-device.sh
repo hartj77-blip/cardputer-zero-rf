@@ -12,7 +12,7 @@ trap 'rm -rf "$STAGE"' EXIT
 KIT=$STAGE/zeroos-rf
 mkdir -p "$KIT/bin"
 STRIP=${STRIP:-strip}
-for f in zeroshell rf/zrfd rf/zrf rf/zrf-sim-sensors rf/zrf-sim-aircraft zrfd zrf zrf-sim-sensors zrf-sim-aircraft; do
+for f in zeroshell rf/zrfd rf/zrf rf/zrf-sim-sensors rf/zrf-sim-aircraft rf/zrf-sim-aprs zrfd zrf zrf-sim-sensors zrf-sim-aircraft zrf-sim-aprs; do
     [ -f "$BUILD/$f" ] || continue
     cp "$BUILD/$f" "$KIT/bin/"
     "$STRIP" "$KIT/bin/$(basename "$f")"

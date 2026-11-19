@@ -17,15 +17,24 @@ STEPS+=",key:p,type:433.92,wait:300,shot:04-spectrum-goto.ppm"
 STEPS+=",enter,wait:5000,shot:05-spectrum-433.ppm"
 STEPS+=",type:162.55,enter,key:z,key:m,key:m,wait:4000,shot:06-spectrum-listening.ppm"
 STEPS+=",open:spectrum,key:b,wait:300,shot:07-spectrum-bands.ppm"
-STEPS+=",down,down,down,down,down,down,down,down,down,down,enter,key:m,key:s,key:r,wait:3000,shot:08-spectrum-sideband.ppm"
+STEPS+=",down,down,down,down,down,down,down,down,down,down,down,down,down,down,down,enter,key:m,key:s,key:r,wait:3000,shot:08-spectrum-sideband.ppm"
 STEPS+=",open:scanner,wait:6000,shot:09-scanner-stopped.ppm"
 STEPS+=",key:l,wait:800,shot:10-scanner-scanning.ppm"
-STEPS+=",right,right,right,wait:6000,shot:11-scanner-2m.ppm"
+STEPS+=",right,right,right,right,right,right,wait:6000,shot:11-scanner-2m.ppm"
 STEPS+=",open:sensors,wait:4000,shot:12-sensors.ppm"
 STEPS+=",down,down,down,down,enter,wait:400,shot:13-sensors-detail.ppm"
 STEPS+=",open:aircraft,wait:9000,shot:14-aircraft.ppm"
 STEPS+=",open:sdrserver,wait:300,shot:15-sdr-server-off.ppm"
 STEPS+=",enter,wait:1500,shot:16-sdr-server-on.ppm"
+STEPS+=",open:station,wait:200,shot:17-station.ppm"
+STEPS+=",enter,type:w1aw,enter,down,enter,type:FN31pr,wait:200,shot:18-station-editing.ppm"
+STEPS+=",enter,down,down,down,down,enter,type:1,enter,wait:200,shot:19-station-set.ppm"
+STEPS+=",open:aprs,wait:5000,shot:20-aprs.ppm"
+STEPS+=",enter,wait:300,shot:21-aprs-detail.ppm"
+# Following a rig needs Hamlib; its model 1 is a pretend rig sitting on 145 MHz.
+if command -v rigctld >/dev/null; then
+    STEPS+=",open:spectrum,key:f,wait:4000,shot:22-spectrum-follow-rig.ppm"
+fi
 
 (cd "$OUT" && HOME="$DEMO" TZ=UTC ZRFD_SOCKET="$DEMO/zrfd.sock" ZRFD_BIN="$BUILD/rf/zrfd" ZRF_SOURCE=sim ZRF_AUDIO=none \
     "$BUILD/zeroshell" --script "$STEPS")

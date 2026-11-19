@@ -38,7 +38,7 @@ class ScannerApp : public App {
 public:
     ScannerApp() {
         for (int i = 0; i < int(std::size(kBands)); ++i)
-            if (std::strcmp(kBands[i].mode, "off") != 0) bands_.push_back(i);
+            if (kBands[i].scan) bands_.push_back(i);
         band_ = 1;   // Airband
     }
     ~ScannerApp() override {
