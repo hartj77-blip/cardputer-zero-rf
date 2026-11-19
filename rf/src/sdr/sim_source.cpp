@@ -1,10 +1,12 @@
 // Simulated receiver: a fixed set of signals at real-world frequencies over a
 // noise floor, so tuning around shows a believable band with no radio attached.
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <vector>
 
+#include "ft8.h"
 #include "sdr/source.h"
 
 namespace zrf {
@@ -29,6 +31,23 @@ const Signal kSignals[] = {
 };
 
 const double kTwoPi = 6.283185307179586;
+
+// FT8 stations, heard on the 20 m FT8 dial frequency (upper sideband). Each
+// transmits in every other 15-second slot, as real stations do. The callsigns
+// are the made-up ones the FT8 documentation uses.
+struct Ft8Station {
+    const char* text;
+    double audio_hz;   // lowest tone, above the dial frequency
+    int parity;        // 0 = slots starting at :00 and :30, 1 = :15 and :45
+    float amp;
+};
+const double kFt8Dial = 14.074e6;
+const Ft8Station kFt8Stations[] = {
+    {"CQ K1ABC FN42", 1500, 0, 0.02f},
+    {"K1ABC W9XYZ EN37", 900, 1, 0.012f},
+    {"CQ DX VE3ABC FN03", 2100, 0, 0.006f},
+    {"W9XYZ K1ABC -11", 1500, 1, 0.02f},
+};
 
 class SimSource : public Source {
 public:
@@ -95,12 +114,38 @@ public:
             ph = std::fmod(ph, kTwoPi);
             mod = std::fmod(mod, kTwoPi * 7000);   // a whole number of turns for every tone derived from it
         }
+        add_ft8(out, n);
         time_ += n / rate_;
         pacer_.wait(n, rate_);
         return n;
     }
 
 private:
+    void add_ft8(cf32* out, size_t n) {
+        if (std::fabs(kFt8Dial + 1500 - freq_) > rate_ * 0.42) return;
+        if (!ft8_ready_) {
+            for (size_t k = 0; k < std::size(kFt8Stations); ++k) ft8_ok_[k] = zrf::ft8_tones(kFt8Stations[k].text, ft8_tones_[k]);
+            ft8_ready_ = true;
+        }
+        // Slots follow the real clock, as on the air.
+        double now = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+        for (size_t k = 0; k < std::size(kFt8Stations); ++k) {
+            if (!ft8_ok_[k]) continue;
+            const Ft8Station& st = kFt8Stations[k];
+            double base = kFt8Dial + st.audio_hz - freq_;
+            for (size_t i = 0; i < n; ++i) {
+                double t = now + double(i) / rate_;
+                double slot = std::floor(t / kFt8SlotSeconds);
+                double into = t - slot * kFt8SlotSeconds - 0.5;   // transmissions start half a second in
+                int sym = int(std::floor(into / kFt8SymbolSeconds));
+                if (into < 0 || sym >= kFt8Symbols || (int64_t(slot) & 1) != st.parity) continue;
+                ft8_phase_[k] += kTwoPi * (base + ft8_tones_[k][sym] * kFt8ToneSpacing) / rate_;
+                out[i] += cf32(st.amp * float(std::cos(ft8_phase_[k])), st.amp * float(std::sin(ft8_phase_[k])));
+            }
+            ft8_phase_[k] = std::fmod(ft8_phase_[k], kTwoPi);
+        }
+    }
+
     float uniform() {
         rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;
         return float(rng_ >> 8) * (1.0f / 16777216.0f) - 0.5f;
@@ -110,6 +155,10 @@ private:
 
     double freq_ = 100e6, rate_ = 1.024e6, time_ = 0;
     int ppm_ = 0;
+    bool ft8_ready_ = false;
+    bool ft8_ok_[std::size(kFt8Stations)] = {};
+    uint8_t ft8_tones_[std::size(kFt8Stations)][kFt8Symbols] = {};
+    double ft8_phase_[std::size(kFt8Stations)] = {};
     const int error_ppm_ = std::getenv("ZRF_SIM_PPM_ERROR") ? std::atoi(std::getenv("ZRF_SIM_PPM_ERROR")) : 0;
     double phase_[std::size(kSignals)] = {}, mod_phase_[std::size(kSignals)] = {};
     uint32_t rng_ = 0x2545F491u;

@@ -136,7 +136,17 @@ out=$("$BIN/zrf" aprs 2)
 echo "$out" | grep -q '^APRS: W1ABC-9>' || fail "no APRS packets: $out"
 sleep 0.3
 pgrep -P "$PID" >/dev/null && fail "APRS program left running"
-"$BIN/zrf" send decode submarines >/dev/null && fail "accepted an unknown decoder"   # our daemon's children only
+"$BIN/zrf" send decode submarines >/dev/null && fail "accepted an unknown decoder"
+
+# FT8, end to end: simulated stations on 14.074 MHz, through the receiver,
+# sideband demodulator, slot timing by the real clock, and the decoder. A
+# whole 15-second slot must go by first, so this takes up to 35 seconds.
+"$BIN/zrf" send tune 14074000 >/dev/null
+out=$("$BIN/zrf" ft8 35)
+echo "$out" | grep -q "^FT8 [0-9]\{6\} -\?[0-9]\+ [0-9.]\+ 1500 CQ K1ABC FN42$" || echo "$out" | grep -q "^FT8 [0-9]\{6\} -\?[0-9]\+ [0-9.]\+ 1500 W9XYZ K1ABC -11$" || fail "no FT8 decode at 1500 Hz: $out"
+echo "$out" | grep -q "^FT8 [0-9]\{6\} done [1-9]" || fail "no FT8 slot summary: $out"
+sleep 0.3
+[ "$("$BIN/zrf" send status | field decode)" = off ] || fail "still decoding FT8 after the client left"   # our daemon's children only
 # The spectrum comes back afterwards.
 "$BIN/zrf" send tune 98300000 >/dev/null
 "$BIN/zrf" peak 320 >/dev/null || fail "no spectrum after decoding"

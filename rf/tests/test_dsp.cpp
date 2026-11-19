@@ -9,6 +9,7 @@
 #include "aprs.h"
 #include "dsp/demod.h"
 #include "dsp/spectrum.h"
+#include "ft8.h"
 #include "json_flat.h"
 #include "proto.h"
 #include "sdr/source.h"
@@ -392,6 +393,53 @@ static void test_adif() {
     CHECK(adif_parse("").empty() && adif_parse("not a log").empty() && adif_parse("<CALL:99>short").empty());
 }
 
+// Three FT8 signals of different strengths in noise, one of them late and
+// one weak, all decode with the right text, frequency and timing.
+static void test_ft8() {
+    uint8_t tones[kFt8Symbols];
+    CHECK(!ft8_tones("THIS TEXT IS FAR TOO LONG TO BE AN FT8 MESSAGE", tones));
+    for (int rate : {32000, 31250}) {
+        struct { const char* text; double hz, start, amp; } sigs[] = {
+            {"CQ K1ABC FN42", 1500, 0.5, 0.2}, {"K1ABC W9XYZ -07", 812.5, 1.3, 0.05}, {"W9XYZ K1ABC RR73", 2400, 0.5, 0.012}};
+        std::vector<float> audio(size_t(rate) * 15, 0.0f);
+        uint32_t rng = 12345;
+        for (float& v : audio) {   // noise, about 0.03 RMS
+            float sum = 0;
+            for (int k = 0; k < 4; ++k) { rng = rng * 1664525u + 1013904223u; sum += float(rng >> 8) / 16777216.0f - 0.5f; }
+            v = sum * 0.05f;
+        }
+        for (auto& sg : sigs) {
+            CHECK(ft8_tones(sg.text, tones));
+            double phase = 0;
+            for (int sym = 0; sym < kFt8Symbols; ++sym) {
+                size_t a = size_t((sg.start + sym * kFt8SymbolSeconds) * rate), b = size_t((sg.start + (sym + 1) * kFt8SymbolSeconds) * rate);
+                for (size_t i = a; i < b && i < audio.size(); ++i) {
+                    phase += 2 * M_PI * (sg.hz + tones[sym] * kFt8ToneSpacing) / rate;
+                    audio[i] += float(sg.amp * std::sin(phase));
+                }
+            }
+        }
+        auto got = ft8_decode(audio.data(), audio.size(), rate);
+        CHECK(got.size() == 3);
+        // Expected strengths from the amplitudes and the noise level: about +22, +10 and -3 dB.
+        const int expect[] = {22, 10, -3};
+        int k = 0;
+        for (auto& sg : sigs) {
+            const Ft8Message* m = nullptr;
+            for (auto& g : got)
+                if (g.text == sg.text) m = &g;
+            CHECK(m != nullptr);
+            CHECK(std::fabs(m->freq_hz - sg.hz) < 4 && std::fabs(m->dt - sg.start) < 0.1);
+            if (std::abs(m->snr_db - expect[k]) > 4) std::fprintf(stderr, "ft8 '%s': %d dB, expected about %d\n", sg.text, m->snr_db, expect[k]);
+            CHECK(std::abs(m->snr_db - expect[k]) <= 4);
+            ++k;
+        }
+    }
+    // Silence decodes to nothing.
+    std::vector<float> quiet(32000 * 15, 0.0f);
+    CHECK(ft8_decode(quiet.data(), quiet.size(), 32000).empty());
+}
+
 int main() {
     test_fft();
     test_spectrum_level_and_position();
@@ -405,6 +453,7 @@ int main() {
     test_adsb();
     test_aprs();
     test_adif();
+    test_ft8();
     std::puts("all DSP tests passed");
     return 0;
 }
