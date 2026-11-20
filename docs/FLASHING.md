@@ -3,14 +3,16 @@
 The Cardputer Zero boots from a microSD card. The Lite ships without one, so this is the first
 thing to do. You need a microSD card of **16 GB or more**, a card reader, and a computer.
 
-There are two systems you can put on the card. Start with the first.
+There are three systems you can put on the card. Start with the first.
 
 | | What | When to use it |
 | --- | --- | --- |
 | **A. M5Stack's stock image** | The official system. Known to boot. ZeroOS RF installs on top of it. | First boot of a new unit, and whenever you want a known-good fallback. |
 | **B. The ZeroOS image** | Our own base OS, built by the `cardputer-zero` repository. | Once that image has been seen to boot. **It has not been tried on hardware yet.** |
+| **C. The ZeroOS RF image** | The ZeroOS image with the RF home screen and radio programs already installed. Nothing to install afterwards. | Once B is known to boot. **Never built to completion or booted yet.** |
 
-After either one, [install the RF kit](#3-install-zeroos-rf) and run the first-run check.
+After A or B, [install the RF kit](#3-install-zeroos-rf) and run the first-run check. After C, go
+straight to the check.
 
 Nothing on this page has been tried by us on a real unit. The stock steps follow M5Stack's own
 [image guide](https://docs.m5stack.com/en/compute/cardputerzero/image) and
@@ -76,6 +78,27 @@ boot is exactly what is still unproven.
 
 ```bash
 xzcat 2026-11-19-zeroos-cardputerzero-arm64.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+## C. ZeroOS RF image (never booted)
+
+The same as B, built from this repository, with everything in the kit already installed: the RF
+home screen, the radio programs, the SDR packages and the dongle access rules.
+
+1. In this repository on GitHub, open **Actions → Build image → Run workflow** and set the Wi-Fi
+   country code. It takes 1.5 to 3 hours. It needs access to the base repository (the
+   `BASE_REPO_TOKEN` secret, unless the base is public).
+2. Download the `zeroos-rf-image` artifact from the run and unzip it. Inside is a file named like
+   `2026-11-20-zeroos-rf-cardputerzero-arm64.img.xz`.
+3. Write it to the card and boot exactly as in B. The defaults are the same: username `pi`,
+   password `raspberry`, hostname `cardputer`, SSH on.
+4. Plug in the dongle and run `zeroos-rf-bringup`. There is no installer step.
+
+To build it on your own machine instead (Docker, about 20 GB of disk, an arm64 build of the
+programs first):
+
+```bash
+image/build.sh build/device
 ```
 
 ## 3. Install ZeroOS RF

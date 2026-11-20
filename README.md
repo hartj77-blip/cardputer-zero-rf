@@ -13,7 +13,7 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 | `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **APRS**, **FT8**, **Logbook**, **SDR Server**, **Station** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
 | `device/` the kit for a real unit: installer and first-run check | Dry-run against the simulated radio only. See [docs/BRINGUP.md](docs/BRINGUP.md). |
 | `base/` the base OS, [cardputer-zero](https://github.com/hartj77-blip/cardputer-zero), pinned as a submodule | Unchanged; we build on it, we don't fork it |
-| Image (SD card) build with the SDR packages | Not started |
+| `image/` a preinstalled SD card image: the base image plus one stage of ours | Written; the preparation step is tested, the image itself has never been built or booted |
 
 ## Spectrum
 
@@ -118,6 +118,11 @@ STRIP=aarch64-linux-gnu-strip tools/package-device.sh build/device dist/zeroos-r
 ```
 
 CI's *Device kit (arm64)* job produces the same file as a downloadable artifact.
+
+For a card with everything preinstalled, run the **Build image** workflow from the Actions tab
+(1.5 to 3 hours), or `image/build.sh build/device` locally. It runs the base's image builder from
+the `base/` submodule with our home screen and adds one stage, `image/stage-zeroos-rf/`, for the
+radio programs. [docs/FLASHING.md](docs/FLASHING.md) covers writing it to a card.
 
 ## Build and try on a PC
 

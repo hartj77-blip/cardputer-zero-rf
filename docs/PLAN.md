@@ -126,8 +126,9 @@ apps. The cost is that our build file mirrors the base's and our launcher list r
 apps, so both need a look whenever the pin moves. Two small hooks in the base would remove that:
 
 1. **An edition hook for apps.** Let a build add apps to the launcher and choose their order.
-2. **An edition hook for the image.** Let `image/build.sh` take extra stage directories, extra
-   packages and an image name. The RF image build waits on this or on a wrapper script here.
+2. **An edition hook for the image.** Let `image/build.sh` take extra stage directories and an
+   image name. Until then `image/build.sh` here copies the base's script and makes those two
+   edits itself, checking each one so a changed base script stops the build.
 
 The base repository is private and this one is public, so CI here needs a read token to build the
 shell (see the README).
