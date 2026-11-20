@@ -43,6 +43,15 @@ for f in zrfd zrf zrf-sim-sensors zrf-sim-aircraft zrf-sim-aprs; do
     [ -f "$HERE/bin/$f" ] && install -m 0755 "$HERE/bin/$f" /usr/local/bin/$f
 done
 install -m 0755 "$HERE/bringup.sh" /usr/local/bin/zeroos-rf-bringup
+# The radio program must start here. If it was built for another system it
+# stops with a missing-library message, and nothing else will work.
+if ! /usr/local/bin/zrfd --help >/dev/null 2>/tmp/zrfd-check.txt; then
+    echo
+    echo "ERROR: the radio program will not start on this system:"
+    sed 's/^/    /' /tmp/zrfd-check.txt
+    echo "Send this message back; the kit needs rebuilding for this system."
+    exit 1
+fi
 
 if [ ! -f "$HERE/bin/zeroshell" ]; then
     echo "No zeroshell in this kit: radio programs only."
