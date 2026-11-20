@@ -140,3 +140,7 @@ Contents access to `cardputer-zero`. The radio core job needs no token.
 - [docs/HAM.md](docs/HAM.md): for amateur radio operators: bands, modes, rig control, what's missing.
 - [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md): other people's code we build in, and its licences.
 - [rf/README.md](rf/README.md): the radio core and the daemon's protocol.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Code from other projects keeps its own licence, listed in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
