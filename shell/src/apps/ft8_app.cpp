@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "apps/bands.h"
+#include "apps/background_radio.h"
 #include "apps/common.h"
 #include "apps/radio_link.h"
 #include "apps/rf_state.h"
@@ -54,6 +55,7 @@ public:
     }
 
     void build(lv_obj_t* root) override {
+        BackgroundRadio::get().stop();   // this app needs the receiver
         my_call_ = prefs::get_str("rf.callsign", "");
         have_home_ = zrf::grid_to_latlon(prefs::get_str("rf.grid", ""), home_lat_, home_lon_);
         // Start on the band Spectrum was last on, if it has an FT8 frequency.

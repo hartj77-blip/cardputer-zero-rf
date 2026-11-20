@@ -9,6 +9,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 
+#include "apps/background_radio.h"
 #include "apps/common.h"
 #include "apps/radio_link.h"
 
@@ -41,6 +42,7 @@ public:
     }
 
     void build(lv_obj_t* root) override {
+        BackgroundRadio::get().stop();   // this app needs the receiver
         state_ = label(root, "", &lv_font_montserrat_16, kMuted);
         lv_obj_set_pos(state_, 8, 4);
         body_ = label(root, "", &lv_font_montserrat_12, kText);

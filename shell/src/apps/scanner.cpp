@@ -10,8 +10,10 @@
 #include <vector>
 
 #include "apps/bands.h"
+#include "apps/background_radio.h"
 #include "apps/common.h"
 #include "apps/radio_link.h"
+#include "memories.h"
 
 namespace zs {
 namespace {
@@ -46,6 +48,7 @@ public:
     }
 
     void build(lv_obj_t* root) override {
+        BackgroundRadio::get().stop();   // this app needs the receiver
         title_ = label(root, "", &lv_font_montserrat_14, kAccent);
         lv_obj_set_pos(title_, 4, 0);
         state_ = label(root, "", &lv_font_montserrat_14, kText);
@@ -79,8 +82,9 @@ public:
 
     bool on_key(uint32_t key) override {
         switch (key) {
-        case LV_KEY_LEFT: band_ = (band_ + int(bands_.size()) - 1) % int(bands_.size()); start_band(); return true;
-        case LV_KEY_RIGHT: band_ = (band_ + 1) % int(bands_.size()); start_band(); return true;
+        // One more choice than there are bands: your saved channels.
+        case LV_KEY_LEFT: band_ = (band_ + int(bands_.size())) % (int(bands_.size()) + 1); start_band(); return true;
+        case LV_KEY_RIGHT: band_ = (band_ + 1) % (int(bands_.size()) + 1); start_band(); return true;
         case ' ':
             if (stopped_) resume();
             return true;
@@ -105,12 +109,46 @@ public:
     }
 
 private:
-    const Band& band() const { return kBands[bands_[size_t(band_)]]; }
+    bool saved_mode() const { return band_ == int(bands_.size()); }
+
+    // Scanning saved channels reuses the band sweep: each channel in turn is
+    // treated as a band one channel wide.
+    const Band& band() const { return saved_mode() ? saved_band_ : kBands[bands_[size_t(band_)]]; }
+
+    void use_saved(size_t i) {
+        saved_index_ = i;
+        const zrf::Memory& m = saved_[i];
+        saved_mode_name_ = m.mode == "off" ? "nfm" : m.mode;
+        double width = saved_mode_name_ == "wfm" ? 100e3 : 12.5e3;
+        saved_band_ = Band{"Saved channels", m.hz, m.hz, width, m.hz, saved_mode_name_.c_str(), 1, false, true};
+    }
+
+    // Move on: the next sweep step of a band, or the next saved channel.
+    void advance() {
+        if (saved_mode()) {
+            if (saved_.empty()) return;
+            use_saved((saved_index_ + 1) % saved_.size());
+            chunk_ = 0;
+        } else {
+            chunk_ = (chunk_ + 1) % chunk_count();
+        }
+    }
 
     void start_band() {
         stopped_ = held_ = false;
         chunk_ = 0;
         link_.client.send("mode off");
+        if (saved_mode()) {
+            saved_ = zrf::load_memories(home_dir() + "/.config/zeroos/rf-memories.tsv");
+            lv_label_set_text(title_, "Saved channels");
+            if (saved_.empty()) {
+                centre_ = 0;   // nothing to tune to: frames are ignored
+                lv_label_set_text(state_, "None yet: A in Spectrum");
+                lv_obj_set_style_text_color(state_, c(kMuted), 0);
+                return;
+            }
+            use_saved(0);
+        }
         tune_chunk();
         lv_label_set_text(title_, band().name);
         update_state();
@@ -139,7 +177,7 @@ private:
     void resume() {
         stopped_ = held_ = false;
         link_.client.send("mode off");
-        chunk_ = (chunk_ + 1) % chunk_count();
+        advance();
         tune_chunk();
         update_state();
     }
@@ -215,7 +253,7 @@ private:
             best_hz = std::clamp(b.start + std::round((hz - b.start) / b.channel) * b.channel, b.start, b.end);
         }
         if (best_hz == 0) {
-            chunk_ = (chunk_ + 1) % chunk_count();
+            advance();
             tune_chunk();
             update_state();
             return;
@@ -253,7 +291,8 @@ private:
             lv_label_set_text(state_, fmt("%s %.4f MHz", held_ ? "Hold" : LV_SYMBOL_VOLUME_MAX, channel_hz_ / 1e6).c_str());
             lv_obj_set_style_text_color(state_, c(kGood), 0);
         } else {
-            lv_label_set_text(state_, fmt("Scanning %.1f MHz", centre_ / 1e6).c_str());
+            lv_label_set_text(state_, saved_mode() ? fmt("Checking %s", saved_[saved_index_].name.substr(0, 14).c_str()).c_str()
+                                                   : fmt("Scanning %.1f MHz", centre_ / 1e6).c_str());
             lv_obj_set_style_text_color(state_, c(kMuted), 0);
         }
     }
@@ -279,6 +318,10 @@ private:
     lv_obj_t* rows_[kRows] = {};
     std::vector<uint16_t> pixels_;
     std::vector<int> bands_;
+    std::vector<zrf::Memory> saved_;
+    size_t saved_index_ = 0;
+    std::string saved_mode_name_;
+    Band saved_band_{};
     std::vector<Hit> hits_;
     std::vector<double> locked_;
     int band_ = 0, chunk_ = 0, settle_ = 0, ticks_ = 0;

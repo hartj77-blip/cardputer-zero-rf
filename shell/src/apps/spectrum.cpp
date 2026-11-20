@@ -8,6 +8,7 @@
 // Station) and T sends this frequency to it. Type a frequency in MHz and
 // press Enter to jump to it. Audio and recording stop on leaving.
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -18,10 +19,12 @@
 #include "apps/common.h"
 #include <sys/stat.h>
 
+#include "apps/background_radio.h"
 #include "apps/bands.h"
 #include "apps/radio_link.h"
 #include "apps/rf_state.h"
 #include "apps/rig_link.h"
+#include "memories.h"
 #include "ui/prefs.h"
 
 namespace zs {
@@ -55,6 +58,8 @@ std::string hz_text(double hz) {
 class SpectrumApp : public App {
 public:
     ~SpectrumApp() override {
+        // Nothing but our own clean-up here: this also runs when the whole
+        // program exits, after the settings store has gone.
         if (timer_) lv_timer_delete(timer_);
     }
 
@@ -98,6 +103,48 @@ public:
         lv_obj_set_style_border_color(band_list_, c(kAccent), 0);
         lv_obj_add_flag(band_list_, LV_OBJ_FLAG_HIDDEN);
 
+        mem_list_ = make_list(root, 30, kTopH, 260, kContentH - kTopH - 2);
+        lv_obj_set_style_border_width(mem_list_, 1, 0);
+        lv_obj_set_style_border_color(mem_list_, c(kAccent), 0);
+        lv_obj_add_flag(mem_list_, LV_OBJ_FLAG_HIDDEN);
+
+        help_ = label(root,
+                      LV_SYMBOL_LEFT LV_SYMBOL_RIGHT " tune    " LV_SYMBOL_UP LV_SYMBOL_DOWN " step    0-9 . Enter  go to\n"
+                      "B bands    Z X span    G gain\n"
+                      "M listen mode    S squelch\n"
+                      "A save channel    L saved channels\n"
+                      "K keep playing after leaving\n"
+                      "P peak hold    C centre on peak\n"
+                      "R record IQ    F follow rig    T set rig",
+                      &lv_font_montserrat_12, kText);
+        lv_obj_set_style_bg_color(help_, c(kSurface), 0);
+        lv_obj_set_style_bg_opa(help_, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(help_, 8, 0);
+        lv_obj_set_style_radius(help_, 6, 0);
+        lv_obj_set_style_border_width(help_, 1, 0);
+        lv_obj_set_style_border_color(help_, c(kAccent), 0);
+        lv_obj_align(help_, LV_ALIGN_CENTER, 0, 8);
+        lv_obj_add_flag(help_, LV_OBJ_FLAG_HIDDEN);
+
+        // Where we were last time.
+        double saved = std::atof(prefs::get_str("rf.spec_hz", "0").c_str());
+        if (saved >= kMinHz && saved <= kMaxHz) freq_ = saved;
+        span_ = std::clamp(prefs::get_int("rf.spec_span", span_), 0, int(std::size(kSpans)) - 1);
+        step_ = std::clamp(prefs::get_int("rf.spec_step", step_), 0, int(std::size(kSteps)) - 1);
+        gain_ = std::clamp(prefs::get_int("rf.spec_gain", gain_), 0, int(std::size(kGains)) - 1);
+        squelch_ = prefs::get_int("rf.spec_squelch", 0) != 0;
+        keep_playing_ = prefs::get_int("rf.keep_playing", 0) != 0;
+        // If the radio was left playing in the background, carry on from it.
+        BackgroundRadio& bg = BackgroundRadio::get();
+        if (bg.playing()) {
+            freq_ = bg.hz();
+            for (int i = 1; i < int(std::size(kModes)); ++i)
+                if (bg.mode() == kModes[i]) mode_ = i;
+            mode_picked_ = true;
+            adopt_background_ = true;
+        }
+
+        saved_key_ = state_key();
         set_message("Starting radio...");
         update_labels();
         timer_ = lv_timer_create([](lv_timer_t* t) { static_cast<SpectrumApp*>(lv_timer_get_user_data(t))->pump(); },
@@ -106,10 +153,54 @@ public:
     }
 
     bool on_key(uint32_t key) override {
+        // Any key puts the help away.
+        if (help_open_) {
+            help_open_ = false;
+            lv_obj_add_flag(help_, LV_OBJ_FLAG_HIDDEN);
+            return true;
+        }
         // The band list takes the arrow keys and Enter while it is open.
         if (bands_open_) {
             if (key == 'b' || key == 'B') { show_bands(false); return true; }
             return key != LV_KEY_UP && key != LV_KEY_DOWN && key != LV_KEY_ENTER;
+        }
+        // So does the list of saved channels; D there deletes the one selected.
+        if (mems_open_) {
+            if (key == 'l' || key == 'L') { show_memories(false); return true; }
+            if (key == 'd' || key == 'D') {
+                lv_obj_t* focused = lv_group_get_focused(group);
+                if (focused && lv_obj_get_parent(focused) == mem_list_ && !memories_.empty()) {
+                    size_t i = lv_obj_get_index(focused);
+                    if (i < memories_.size()) {
+                        shell_toast("Deleted " + memories_[i].name);
+                        memories_.erase(memories_.begin() + long(i));
+                        save_memories();
+                        show_memories(!memories_.empty());
+                    }
+                }
+                return true;
+            }
+            return key != LV_KEY_UP && key != LV_KEY_DOWN && key != LV_KEY_ENTER;
+        }
+        // Naming a channel being saved.
+        if (naming_) {
+            if (key == LV_KEY_ENTER) {
+                zrf::Memory m;
+                m.hz = freq_;
+                m.mode = mode_ ? kModes[mode_] : suggested_mode(freq_);
+                m.squelch = squelch_;
+                m.name = name_.empty() ? fmt("%.4f MHz", freq_ / 1e6) : name_;
+                memories_ = zrf::load_memories(memory_path());
+                memories_.push_back(m);
+                shell_toast(save_memories() ? "Saved " + m.name : "Could not save the channel");
+                naming_ = false;
+            } else if (key == LV_KEY_BACKSPACE) {
+                if (!name_.empty()) name_.pop_back();
+            } else if (key >= 32 && key < 127 && name_.size() < 20) {
+                name_ += char(key);
+            }
+            update_labels();
+            return true;
         }
         // Typing a frequency.
         if ((key >= '0' && key <= '9') || key == '.') {
@@ -162,6 +253,25 @@ public:
             shell_toast(squelch_ ? "Squelch on" : "Squelch off");
             break;
         case 'b': case 'B': show_bands(true); return true;
+        case 'a': case 'A':
+            naming_ = true;
+            name_.clear();
+            break;
+        case 'l': case 'L':
+            memories_ = zrf::load_memories(memory_path());
+            if (memories_.empty()) shell_toast("No saved channels yet. A saves this one.");
+            else show_memories(true);
+            return true;
+        case 'k': case 'K':
+            keep_playing_ = !keep_playing_;
+            prefs::set_int("rf.keep_playing", keep_playing_ ? 1 : 0);
+            shell_toast(keep_playing_ ? "Will keep playing when you leave" : "Will stop playing when you leave");
+            break;
+        case 'h': case 'H': case '?':
+            help_open_ = true;
+            lv_obj_remove_flag(help_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(help_);
+            return true;
         case 'r': case 'R': toggle_record(); break;
         case 'f': case 'F':
             if (rig_.active()) {
@@ -197,7 +307,11 @@ public:
     }
 
     bool on_back() override {
+        if (help_open_) { help_open_ = false; lv_obj_add_flag(help_, LV_OBJ_FLAG_HIDDEN); return true; }
         if (bands_open_) { show_bands(false); return true; }
+        if (mems_open_) { show_memories(false); return true; }
+        if (naming_) { naming_ = false; update_labels(); return true; }
+        if (entry_.empty()) leaving();
         if (entry_.empty()) return false;
         entry_.clear();
         update_labels();
@@ -217,6 +331,7 @@ private:
             shell_toast("Rig not answering. Check Station and the cable.");
             update_labels();
         }
+        if (state_key() != saved_key_ && ++unsaved_ticks_ > 50) save_state();
         if (!link_.ensure(fresh, unavailable)) {
             if (unavailable) set_message("Radio service not available");
             return;
@@ -237,6 +352,12 @@ private:
             client_.send(fmt("spectrum %d 15", kW));
             send_squelch();
             if (mode_) client_.send(std::string("mode ") + kModes[mode_]);
+            // We now hold the audio ourselves; the background connection can go
+            // without the sound stopping.
+            if (adopt_background_) {
+                BackgroundRadio::get().release();
+                adopt_background_ = false;
+            }
         }
 
         zrf::RadioEvents ev;
@@ -320,6 +441,86 @@ private:
 
     void send_squelch() {
         client_.send(squelch_ ? fmt("squelch %d", kSquelchDb) : std::string("squelch off"));
+    }
+
+    static std::string memory_path() {
+        std::string dir = home_dir() + "/.config";
+        mkdir(dir.c_str(), 0755);
+        dir += "/zeroos";
+        mkdir(dir.c_str(), 0755);
+        return dir + "/rf-memories.tsv";
+    }
+
+    bool save_memories() { return zrf::save_memories(memory_path(), memories_); }
+
+    // The list is rebuilt each time it opens: channels come and go.
+    void show_memories(bool on) {
+        mems_open_ = on;
+        lv_obj_clean(mem_list_);
+        if (!on) {
+            lv_obj_add_flag(mem_list_, LV_OBJ_FLAG_HIDDEN);
+            return;
+        }
+        for (const zrf::Memory& m : memories_) {
+            lv_obj_t* row = list_button(mem_list_, nullptr, m.name.c_str(), on_memory_clicked, this);
+            lv_obj_t* v = lv_label_create(row);
+            std::string mode = m.mode == "off" ? "" : m.mode;
+            for (char& ch : mode) ch = char(std::toupper(static_cast<unsigned char>(ch)));
+            lv_label_set_text(v, fmt("%.4f %s", m.hz / 1e6, mode.c_str()).c_str());
+        }
+        finish_list(mem_list_);
+        lv_obj_remove_flag(mem_list_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(mem_list_);
+        lv_group_focus_obj(lv_obj_get_child(mem_list_, 0));
+        shell_toast("Enter tunes, D deletes");
+    }
+
+    static void on_memory_clicked(lv_event_t* e) {
+        auto* self = static_cast<SpectrumApp*>(lv_event_get_user_data(e));
+        if (!self->mems_open_) return;
+        size_t i = lv_obj_get_index(static_cast<lv_obj_t*>(lv_event_get_target(e)));
+        if (i >= self->memories_.size()) return;
+        const zrf::Memory m = self->memories_[i];
+        // The row being clicked can't be removed from inside its own click.
+        lv_obj_add_flag(self->mem_list_, LV_OBJ_FLAG_HIDDEN);
+        self->mems_open_ = false;
+        self->tune(m.hz);
+        self->squelch_ = m.squelch;
+        self->send_squelch();
+        // Listen the way the channel was saved, if already listening;
+        // otherwise the next M press picks it.
+        int wanted = 0;
+        for (int k = 1; k < int(std::size(kModes)); ++k)
+            if (m.mode == kModes[k]) wanted = k;
+        if (self->mode_ && wanted) {
+            self->mode_ = wanted;
+            self->client_.send(std::string("mode ") + kModes[wanted]);
+        }
+        self->mode_picked_ = false;
+        self->update_labels();
+    }
+
+    // Come back to the same place next time. Written a couple of seconds
+    // after the last change, so holding an arrow key is one write, not fifty.
+    void save_state() {
+        prefs::set_str("rf.spec_hz", fmt("%.0f", freq_));
+        prefs::set_int("rf.spec_span", span_);
+        prefs::set_int("rf.spec_step", step_);
+        prefs::set_int("rf.spec_gain", gain_);
+        prefs::set_int("rf.spec_squelch", squelch_ ? 1 : 0);
+        saved_key_ = state_key();
+        unsaved_ticks_ = 0;
+    }
+    std::string state_key() const { return fmt("%.0f/%d/%d/%d/%d", freq_, span_, step_, gain_, squelch_ ? 1 : 0); }
+
+    // Esc is about to take us home.
+    void leaving() {
+        if (state_key() != saved_key_) save_state();
+        // Keep playing in the background if asked to and there is something on.
+        if (mode_ && keep_playing_ && client_.connected()) {
+            if (BackgroundRadio::get().start(freq_, kSpans[span_], kModes[mode_], squelch_))
+                shell_toast(fmt("Still playing %.4f MHz. Open Spectrum to stop.", freq_ / 1e6));
+        }
     }
 
     void show_bands(bool on) {
@@ -423,7 +624,9 @@ private:
         // Let the Logbook fill a new contact from where we are.
         g_rf_last_hz = freq_;
         g_rf_last_mode = mode_ ? kModes[mode_] : "";
-        if (!entry_.empty()) {
+        if (naming_) {
+            lv_label_set_text(freq_label_, ("Name: " + name_ + "_").c_str());
+        } else if (!entry_.empty()) {
             lv_label_set_text(freq_label_, ("Go to " + entry_ + "_ MHz").c_str());
         } else {
             lv_label_set_text(freq_label_, fmt("%.5f MHz", freq_ / 1e6).c_str());
@@ -442,9 +645,10 @@ private:
         // listening or the key hints otherwise.
         const Band* band = band_at(freq_);
         std::string hint = band ? std::string(band->name) + "   " : "";
-        if (!entry_.empty()) hint = "Enter go   Esc cancel";
+        if (naming_) hint = "Enter save   Esc cancel";
+        else if (!entry_.empty()) hint = "Enter go   Esc cancel";
         else if (mode_ && signal_db_ > -100) hint += fmt("signal %+.0f dB", signal_db_);
-        else hint += band ? "B bands  M listen" : "0-9 go to  B bands  M listen";
+        else hint += band ? "M listen  H keys" : "B bands  M listen  H keys";
         lv_label_set_text(hint_label_, hint.c_str());
     }
 
@@ -466,6 +670,12 @@ private:
     bool squelch_ = false, bands_open_ = false, recording_ = false;
     std::string record_name_;
     lv_obj_t* band_list_ = nullptr;
+    lv_obj_t *mem_list_ = nullptr, *help_ = nullptr;
+    std::vector<zrf::Memory> memories_;
+    bool mems_open_ = false, naming_ = false, help_open_ = false;
+    bool keep_playing_ = false, adopt_background_ = false;
+    std::string name_, saved_key_;
+    int unsaved_ticks_ = 0;
     bool peak_hold_ = false;
     std::string entry_, error_;
 };

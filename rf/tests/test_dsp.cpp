@@ -11,6 +11,7 @@
 #include "dsp/spectrum.h"
 #include "ft8.h"
 #include "json_flat.h"
+#include "memories.h"
 #include "proto.h"
 #include "sdr/source.h"
 
@@ -440,6 +441,29 @@ static void test_ft8() {
     CHECK(ft8_decode(quiet.data(), quiet.size(), 32000).empty());
 }
 
+static void test_memories() {
+    const char* path = "zrf_test_memories.tsv";
+    std::vector<Memory> list = {
+        {162.55e6, "nfm", true, "Weather"}, {14.2e6, "usb", false, "20 m calling"}, {98.1e6, "wfm", false, "Tab\tand newline\nin name"}};
+    CHECK(save_memories(path, list));
+    auto back = load_memories(path);
+    CHECK(back.size() == 3);
+    CHECK(back[0].hz == 162.55e6 && back[0].mode == "nfm" && back[0].squelch && back[0].name == "Weather");
+    CHECK(back[1].hz == 14.2e6 && back[1].mode == "usb" && !back[1].squelch && back[1].name == "20 m calling");
+    CHECK(back[2].name == "Tab and newline in name");   // kept on one line
+    // A hand-edited file with junk in it: good lines survive, bad ones are skipped.
+    {
+        std::ofstream f(path);
+        f << "# comment\n\nnot a channel\n146520000\tnfm\t0\tSimplex\r\nabc\tnfm\t0\tBad number\n"
+             "5\tnfm\t0\tToo low\n121500000\tam\t1\n433920000\t\t0\tNo mode\n121500000\tam\t1\tGuard\n";
+    }
+    back = load_memories(path);
+    CHECK(back.size() == 2 && back[0].name == "Simplex" && back[1].name == "Guard" && back[1].squelch);
+    std::remove(path);
+    CHECK(load_memories("/nonexistent/memories.tsv").empty());
+    CHECK(!save_memories("/nonexistent/dir/memories.tsv", list));
+}
+
 int main() {
     test_fft();
     test_spectrum_level_and_position();
@@ -453,6 +477,7 @@ int main() {
     test_adsb();
     test_aprs();
     test_adif();
+    test_memories();
     test_ft8();
     std::puts("all DSP tests passed");
     return 0;

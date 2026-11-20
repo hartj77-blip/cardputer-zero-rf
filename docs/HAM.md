@@ -116,6 +116,12 @@ requires; DIGI is written as mode DATA, so name the real mode in the comment if 
 
 ## Also useful
 
+- **Saved channels**: **A** in Spectrum saves a frequency with a name, its mode and squelch; **L**
+  lists them. Scanner's *Saved channels* scans just those: your local repeaters and simplex
+  frequencies rather than a whole band.
+- **Keep playing**: **K** in Spectrum lets a net or a repeater carry on in the background while you
+  use the Logbook or Notes.
+
 - **Scanner** on 2 m, 1.25 m and 70 cm: stops on active simplex and repeater outputs and logs them.
 - **SDR Server**: use the Cardputer and dongle as a remote receiver for SDR++ or GQRX on a PC.
 - **Recording**: **R** in Spectrum saves raw IQ with a SigMF description for later analysis.

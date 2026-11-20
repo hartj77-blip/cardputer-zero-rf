@@ -28,6 +28,15 @@ shows signal strength above the noise. **S** toggles squelch. **R** records raw 
 to `~/Recordings` (about 2 MB a second at the default width; it stops by itself before the card
 fills, and when you retune). Audio and recording stop when you leave the app.
 
+**A** saves the channel you are on (type a name, **Enter**); **L** lists your saved channels, where
+**Enter** tunes to one and **D** deletes it. They live in `~/.config/zeroos/rf-memories.tsv`, one
+line each, and the Scanner can scan them.
+
+**K** makes the radio keep playing after you leave Spectrum, so you can listen while writing notes
+or browsing files. Opening Spectrum again picks the audio back up; opening another RF app stops it,
+because that app needs the receiver. Spectrum reopens where you left it (frequency, width, step,
+gain and squelch). **H** shows all the keys.
+
 **F** follows a transceiver's dial through Hamlib, so the display becomes a panadapter for the
 rig, and **T** sends the displayed frequency to the rig. Set the rig up in Station.
 
@@ -64,7 +73,8 @@ it, and **D** there deletes it.
 
 Sweeps a band, stops on the first channel with a signal, plays it until it goes quiet, then carries
 on, keeping a log of what it heard. **Left**/**Right** change band (airband, weather radio, marine,
-amateur, FRS/GMRS, PMR446, CB, broadcast FM), **Space** skips the current channel, **H** holds on
+amateur, FRS/GMRS, PMR446, CB, broadcast FM) and, last in the list, **Saved channels**, which
+checks each channel you saved in Spectrum in turn, **Space** skips the current channel, **H** holds on
 it, **L** locks it out, **C** clears the log and lockouts.
 
 ## Aircraft

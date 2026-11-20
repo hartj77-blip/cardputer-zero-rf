@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "adsb.h"
+#include "apps/background_radio.h"
 #include "apps/common.h"
 #include "apps/radio_link.h"
 
@@ -26,6 +27,7 @@ public:
     }
 
     void build(lv_obj_t* root) override {
+        BackgroundRadio::get().stop();   // this app needs the receiver
         title_ = label(root, "1090 MHz", &lv_font_montserrat_14, kAccent);
         lv_obj_set_pos(title_, 4, 0);
         count_ = label(root, "", &lv_font_montserrat_12, kMuted);
