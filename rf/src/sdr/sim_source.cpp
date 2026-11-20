@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "ft8.h"
+#include "rds.h"
 #include "sdr/source.h"
 
 namespace zrf {
@@ -82,10 +83,19 @@ public:
                 double dev = 0;
                 float amp = sig.amp;
                 switch (sig.kind) {
-                case Kind::FmBroadcast:
-                    mod += kTwoPi * 1000.0 / rate_;
-                    dev = 55e3 * std::sin(mod) + 15e3 * std::sin(mod * 7.3);
+                case Kind::FmBroadcast: {
+                    // A stereo station: 1 kHz on the left, 2.5 kHz on the right,
+                    // the 19 kHz pilot, left-minus-right around 38 kHz and RDS
+                    // around 57 kHz. One RDS bit lasts 16 pilot cycles.
+                    double l = 0.8 * std::sin(kTwoPi * 1000 * t), r = 0.4 * std::sin(kTwoPi * 2500 * t);
+                    double pilot = kTwoPi * 19000 * t;
+                    double u = t * 1187.5;
+                    const std::vector<int>& rds = rds_levels(s);
+                    double data = rds[size_t(u) % rds.size()] * std::sin(kTwoPi * (u - std::floor(u)));
+                    dev = 75e3 * (0.9 * ((l + r) / 2 + (l - r) / 2 * std::sin(2 * pilot)) + 0.09 * std::sin(pilot) +
+                                  0.05 * data * std::sin(3 * pilot));
                     break;
+                }
                 case Kind::NarrowFm:
                     mod += kTwoPi * 700.0 / rate_;
                     dev = 3e3 * std::sin(mod);
@@ -121,6 +131,21 @@ public:
     }
 
 private:
+    // Each FM station's RDS bit stream, differentially encoded, made on first use.
+    const std::vector<int>& rds_levels(size_t station) {
+        std::vector<int>& levels = rds_levels_[station];
+        if (levels.empty()) {
+            static const char* const names[] = {"COAST 88", "NEWS 945", "ZERO FM", "CAMPUS", "CLASSIC", "ROCK 104"};
+            static const char* const texts[] = {"Easy listening by the sea", "News on the hour, every hour", "Test tones on every channel",
+                                                "Student radio", "The great composers", "Loud guitars all day"};
+            size_t k = station % 6;
+            std::vector<uint8_t> bits = zrf::rds_encode(uint16_t(0x5400 + k), names[k], texts[k]);
+            int e = 0;
+            for (uint8_t b : bits) { e ^= b; levels.push_back(e ? 1 : -1); }
+        }
+        return levels;
+    }
+
     void add_ft8(cf32* out, size_t n) {
         if (std::fabs(kFt8Dial + 1500 - freq_) > rate_ * 0.42) return;
         if (!ft8_ready_) {
@@ -155,6 +180,7 @@ private:
 
     double freq_ = 100e6, rate_ = 1.024e6, time_ = 0;
     int ppm_ = 0;
+    std::vector<int> rds_levels_[std::size(kSignals)];
     bool ft8_ready_ = false;
     bool ft8_ok_[std::size(kFt8Stations)] = {};
     uint8_t ft8_tones_[std::size(kFt8Stations)][kFt8Symbols] = {};

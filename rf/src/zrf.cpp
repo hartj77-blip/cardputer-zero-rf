@@ -141,6 +141,7 @@ int usage() {
                  "       zrf [--socket <path>] peak [cols]\n"
                  "       zrf [--socket <path>] watch [cols]\n"
                  "       zrf [--socket <path>] record <file.cu8> [seconds]\n"
+                 "       zrf [--socket <path>] recordaudio <file.wav> <wfm|nfm|am|usb|lsb|cw> [seconds]\n"
                  "       zrf [--socket <path>] listen <wfm|nfm|am> [seconds]\n"
                  "       zrf [--socket <path>] sensors|aircraft|aprs|ft8|server [seconds]\n"
                  "       zrf [--socket <path>] snapshot <out.ppm> [cols] [rows]\n");
@@ -208,16 +209,29 @@ int main(int argc, char** argv) {
             if (read_line(line, 100) && line.rfind("E ", 0) == 0) { std::fprintf(stderr, "zrf: %s\n", line.c_str() + 2); return 1; }
         return 0;
     }
-    if (cmd == "listen") {
+    if (cmd == "listen" || cmd == "recordaudio") {
+        // recordaudio <file.wav> <mode> [seconds]: listen and save what is heard.
+        std::string wav;
+        if (cmd == "recordaudio") {
+            if (i >= argc) return usage();
+            wav = argv[i++];
+        }
         if (i >= argc) return usage();
         std::string mode = argv[i++], reply;
         int seconds = int_arg(0);
         if (!send_line("mode " + mode) || !read_line(reply)) return 1;
         if (reply.rfind("ok", 0) != 0) { std::fprintf(stderr, "zrf: %s\n", reply.c_str()); return 1; }
+        if (!wav.empty()) {
+            if (!send_line("recordaudio " + wav) || !read_line(reply)) return 1;
+            if (reply.rfind("ok", 0) != 0) { std::fprintf(stderr, "zrf: %s\n", reply.c_str()); return 1; }
+        }
         // Audio plays for as long as we stay connected.
         std::string line;
         for (int waited = 0; seconds == 0 || waited < seconds * 10; ++waited)
-            if (read_line(line, 100) && line.rfind("E ", 0) == 0) std::fprintf(stderr, "zrf: %s\n", line.c_str() + 2);
+            if (read_line(line, 100)) {
+                if (line.rfind("E ", 0) == 0) std::fprintf(stderr, "zrf: %s\n", line.c_str() + 2);
+                else if (line.rfind("R ", 0) == 0) { std::printf("%s\n", line.c_str() + 2); std::fflush(stdout); }
+            }
         return 0;
     }
     if (cmd == "sensors" || cmd == "aircraft" || cmd == "aprs" || cmd == "ft8" || cmd == "server") {

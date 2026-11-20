@@ -76,6 +76,46 @@ bytes=$(stat -c %s "$DIR/audio.raw")
 [ "$bytes" -ge 96000 ] && [ "$bytes" -le 150000 ] || fail "2 s of 32 kHz audio should be about 128000 bytes, got $bytes"
 "$BIN/zrf" send mode ssb >/dev/null && fail "accepted an unknown mode"
 
+# Broadcast FM: the simulated station is in stereo, and its name and text
+# arrive from RDS within a few seconds. Audio is written as two channels.
+"$BIN/zrf" send tune 98300000 >/dev/null
+out=$("$BIN/zrf" listen wfm 5)
+echo "$out" | grep -q "^stereo 5402 ZERO FM 	Test tones on every channel$" || fail "no stereo/RDS for the FM station: $out"
+bytes=$(stat -c %s "$DIR/audio.raw")
+[ "$bytes" -ge 500000 ] && [ "$bytes" -le 760000 ] || fail "5 s of stereo 32 kHz audio should be about 640000 bytes, got $bytes"
+# Retuning forgets the station.
+"$BIN/zrf" send tune 101100000 >/dev/null
+out=$("$BIN/zrf" listen wfm 5)
+echo "$out" | grep -q "ZERO FM" && fail "station name kept after retuning: $out"
+echo "$out" | grep -q "CLASSIC" || fail "no RDS name for the second station: $out"
+
+# Recording what is heard gives a WAV file a player will open: the header's
+# sizes match the file, and the format is right for the mode.
+"$BIN/zrf" send tune 162550000 >/dev/null
+"$BIN/zrf" recordaudio "$DIR/heard.wav" nfm 2
+sleep 0.3
+python3 - "$DIR/heard.wav" 1 <<'PY' || fail "mono audio recording is not a valid WAV"
+import struct, sys, os
+d = open(sys.argv[1], 'rb').read()
+riff, size, wave, fmt_, flen, kind, ch, rate, brate, align, bits, data, dlen = struct.unpack('<4sI4s4sIHHIIHH4sI', d[:44])
+assert (riff, wave, fmt_, data) == (b'RIFF', b'WAVE', b'fmt ', b'data'), "bad markers"
+assert kind == 1 and bits == 16 and ch == int(sys.argv[2]) and rate in (32000, 31250), (kind, bits, ch, rate)
+assert size == len(d) - 8 and dlen == len(d) - 44, (size, dlen, len(d))
+secs = dlen / (rate * ch * 2)
+assert 1.2 < secs < 2.6, secs
+assert any(d[44:]), "recording is silent"
+PY
+"$BIN/zrf" send tune 98300000 >/dev/null
+"$BIN/zrf" recordaudio "$DIR/stereo.wav" wfm 2
+sleep 0.3
+python3 - "$DIR/stereo.wav" <<'PY' || fail "stereo audio recording is not a valid 2-channel WAV"
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+ch, rate = struct.unpack('<HI', d[22:28])
+assert ch == 2 and struct.unpack('<I', d[40:44])[0] == len(d) - 44, (ch, len(d))
+PY
+"$BIN/zrf" send recordaudio /tmp/x.wav >/dev/null && fail "recorded audio without listening"
+
 # Squelch: silence on an empty frequency, audio on a signal.
 "$BIN/zrf" send squelch 10 >/dev/null
 "$BIN/zrf" send tune 163200000 >/dev/null

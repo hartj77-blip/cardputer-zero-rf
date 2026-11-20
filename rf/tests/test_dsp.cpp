@@ -8,10 +8,12 @@
 #include "adsb.h"
 #include "aprs.h"
 #include "dsp/demod.h"
+#include "dsp/fm_broadcast.h"
 #include "dsp/spectrum.h"
 #include "ft8.h"
 #include "json_flat.h"
 #include "memories.h"
+#include "rds.h"
 #include "proto.h"
 #include "sdr/source.h"
 
@@ -183,9 +185,15 @@ static void test_demod() {
         CHECK(demod.audio_rate() > 30000 && demod.audio_rate() < 34000);
         std::vector<cf32> block(4096);
         std::vector<int16_t> pcm;
-        while (pcm.size() < size_t(demod.audio_rate() * 0.45)) {
+        while (pcm.size() < size_t(demod.audio_rate() * 0.45 * demod.channels())) {
             CHECK(src->read(block.data(), block.size()) == block.size());
             demod.run(block.data(), block.size(), pcm);
+        }
+        // Broadcast FM comes out in stereo: look at the left channel, which carries the 1 kHz tone.
+        if (demod.channels() == 2) {
+            std::vector<int16_t> left;
+            for (size_t i = 0; i + 1 < pcm.size(); i += 2) left.push_back(pcm[i]);
+            pcm = left;
         }
         double peak = audio_peak_hz(pcm, demod.audio_rate());
         if (std::fabs(peak - c.tone) > 15) std::fprintf(stderr, "%s at %.0f: tone %.1f Hz\n", mode_name(c.mode), c.rate, peak);
@@ -464,6 +472,103 @@ static void test_memories() {
     CHECK(!save_memories("/nonexistent/dir/memories.tsv", list));
 }
 
+static void test_rds() {
+    // The check bits for a data word, worked by hand from the generator
+    // polynomial: 0x0001 * x^10 mod g(x) is g(x) without its top term.
+    CHECK(rds_crc(0x0000) == 0 && rds_crc(0x0001) == 0x1B9);
+    auto bits = rds_encode(0x54A8, "ZERO FM", "Now playing: test tones on every channel");
+    CHECK(bits.size() % 104 == 0);
+    RdsDecoder d;
+    // Start mid-stream, as a receiver does, and run the sequence twice.
+    for (int pass = 0; pass < 3; ++pass)
+        for (size_t i = (pass == 0 ? 37 : 0); i < bits.size(); ++i) d.push_bit(bits[i]);
+    CHECK(d.synced() && d.pi() == 0x54A8);
+    CHECK(d.name() == "ZERO FM ");
+    CHECK(d.text() == "Now playing: test tones on every channel");
+
+    // A few damaged bits lose a group, not the station.
+    RdsDecoder noisy;
+    for (int pass = 0; pass < 4; ++pass)
+        for (size_t i = 0; i < bits.size(); ++i) noisy.push_bit(bits[i] ^ ((i + size_t(pass) * 37) % 211 == 5 ? 1 : 0));
+    CHECK(noisy.synced() && noisy.name() == "ZERO FM ");
+    // A dropped bit is recovered from: sync is lost and found again.
+    RdsDecoder slip;
+    for (int pass = 0; pass < 5; ++pass)
+        for (size_t i = 0; i < bits.size(); ++i)
+            if (!(pass == 1 && i == 500)) slip.push_bit(bits[i]);
+    CHECK(slip.synced() && slip.name() == "ZERO FM " && slip.text() == "Now playing: test tones on every channel");
+    // Random bits don't produce a station.
+    RdsDecoder junk;
+    uint32_t rng = 7;
+    for (int i = 0; i < 20000; ++i) { rng = rng * 1664525u + 1013904223u; junk.push_bit(int(rng >> 20 & 1)); }
+    CHECK(junk.name().empty() && junk.text().empty());
+}
+
+// Level in dB of the strongest of a tone's nearest bins, from the last 8192 samples.
+static double tone_db(const std::vector<float>& x, double hz, double rate) {
+    const size_t n = 8192;
+    Spectrum sp(n);
+    std::vector<cf32> v(n);
+    for (size_t i = 0; i < n; ++i) v[i] = cf32(x[x.size() - n + i], 0);
+    sp.add(v.data());
+    auto out = sp.take();
+    size_t bin = n / 2 + size_t(hz * n / rate + 0.5);
+    return std::max({out[bin - 1], out[bin], out[bin + 1]});
+}
+
+// A stereo station with RDS, as it comes out of the FM discriminator: left
+// and right carry different tones and come out on their own channels, and
+// the station's name and text are read. A mono station stays mono.
+static void test_fm_broadcast() {
+    for (double rate : {256000.0, 250000.0}) {
+        const int decim = 8;
+        auto bits = rds_encode(0x54A8, "ZERO FM", "Stereo and RDS test");
+        std::vector<int> levels(bits.size());   // differentially encoded
+        int e = 0;
+        for (size_t i = 0; i < bits.size(); ++i) { e ^= bits[i]; levels[i] = e ? 1 : -1; }
+
+        for (bool with_pilot : {true, false}) {
+            FmBroadcast fm(rate, decim);
+            std::vector<float> disc(8192), out, left, right;
+            uint32_t rng = 99;
+            double t = 0;
+            for (int block = 0; block < int(4.0 * rate / 8192); ++block) {   // four seconds
+                for (float& v : disc) {
+                    double l = 0.8 * std::sin(2 * M_PI * 1000 * t), r = 0.4 * std::sin(2 * M_PI * 2500 * t);
+                    double pilot = 2 * M_PI * 19000 * t + 0.7;   // the station's own phase
+                    double u = t * 1187.5;
+                    double rds = levels[size_t(u) % levels.size()] * std::sin(2 * M_PI * (u - std::floor(u)));
+                    rng = rng * 1664525u + 1013904223u;
+                    double noise = (double(rng >> 8) / 16777216.0 - 0.5) * 0.02;
+                    double m = (l + r) / 2, d = (l - r) / 2;
+                    v = float(with_pilot ? 0.9 * (m + d * std::sin(2 * pilot)) + 0.09 * std::sin(pilot) + 0.05 * rds * std::sin(3 * pilot) + noise
+                                         : 0.9 * m + noise);
+                    t += 1 / rate;
+                }
+                out.clear();
+                fm.run(disc.data(), disc.size(), out);
+                for (size_t i = 0; i + 1 < out.size(); i += 2) { left.push_back(out[i]); right.push_back(out[i + 1]); }
+            }
+            double audio = rate / decim;
+            if (with_pilot) {
+                CHECK(fm.stereo());
+                // Each channel has its own tone, with the other at least 25 dB down.
+                double sep_l = tone_db(left, 1000, audio) - tone_db(left, 2500, audio);
+                double sep_r = tone_db(right, 2500, audio) - tone_db(right, 1000, audio);
+                if (sep_l < 25 || sep_r < 25) std::fprintf(stderr, "stereo separation at %.0f: %.1f / %.1f dB\n", rate, sep_l, sep_r);
+                CHECK(sep_l > 25 && sep_r > 25);
+                if (fm.rds().name() != "ZERO FM ") std::fprintf(stderr, "rds at %.0f: synced %d groups %d name '%s'\n", rate, fm.rds().synced(), fm.rds().groups(), fm.rds().name().c_str());
+                CHECK(fm.rds().pi() == 0x54A8 && fm.rds().name() == "ZERO FM ");
+                CHECK(fm.rds().text() == "Stereo and RDS test");
+            } else {
+                CHECK(!fm.stereo() && fm.rds().name().empty());
+                for (size_t i = left.size() - 1000; i < left.size(); ++i) CHECK(left[i] == right[i]);
+                CHECK(tone_db(left, 1000, audio) - tone_db(left, 2500, audio) > 3);   // both tones, the louder one louder
+            }
+        }
+    }
+}
+
 int main() {
     test_fft();
     test_spectrum_level_and_position();
@@ -478,6 +583,8 @@ int main() {
     test_aprs();
     test_adif();
     test_memories();
+    test_rds();
+    test_fm_broadcast();
     test_ft8();
     std::puts("all DSP tests passed");
     return 0;

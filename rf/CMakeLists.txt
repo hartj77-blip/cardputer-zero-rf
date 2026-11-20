@@ -43,7 +43,9 @@ target_link_libraries(ft8lib PUBLIC m)
 
 add_library(zrfcore STATIC
     src/ft8.cpp
+    src/rds.cpp
     src/dsp/demod.cpp
+    src/dsp/fm_broadcast.cpp
     src/dsp/spectrum.cpp
     src/sdr/source.cpp
     src/sdr/sim_source.cpp

@@ -48,6 +48,9 @@ STEPS+=",enter,wait:600,key:h,wait:200,shot:33-spectrum-keys.ppm"
 STEPS+=",esc,key:m,key:k,wait:1200,esc,open:notes,wait:300,shot:34-still-playing.ppm"
 STEPS+=",open:spectrum,wait:1200,key:k,wait:200"
 STEPS+=",open:scanner,left,left,wait:6000,shot:35-scanner-saved.ppm"
+# Broadcast FM: the station's name, stereo and text from RDS; record the audio.
+STEPS+=",open:spectrum,type:98.3,enter,key:m,wait:6000,shot:36-spectrum-fm-station.ppm"
+STEPS+=",key:w,wait:1500,shot:37-spectrum-recording-audio.ppm,key:w,wait:300,key:m,key:m,key:m,key:m,key:m,key:m"
 # Following a rig needs Hamlib; its model 1 is a pretend rig sitting on 145 MHz.
 if command -v rigctld >/dev/null; then
     STEPS+=",open:spectrum,key:f,wait:4000,shot:28-spectrum-follow-rig.ppm"
@@ -55,6 +58,9 @@ fi
 
 (cd "$OUT" && HOME="$DEMO" TZ=UTC ZRFD_SOCKET="$DEMO/zrfd.sock" ZRFD_BIN="$BUILD/rf/zrfd" ZRF_SOURCE=sim ZRF_AUDIO=none \
     "$BUILD/zeroshell" --script "$STEPS")
+# The audio recorded above must be a WAV file with sound in it.
+WAV=$(ls "$DEMO"/Recordings/radio_*.wav 2>/dev/null | head -1)
+[ -n "$WAV" ] && [ "$(stat -c %s "$WAV")" -gt 20000 ] || { echo "no audio recording was saved" >&2; exit 1; }
 # The channels saved above must be on disk, one per line.
 [ "$(grep -c "^1[0-9]*	[a-z]*	[01]	" "$DEMO/.config/zeroos/rf-memories.tsv")" = 2 ] || { echo "saved channels file is wrong:" >&2; cat "$DEMO/.config/zeroos/rf-memories.tsv" >&2; exit 1; }
 # The contacts logged above must be on disk as ADIF another program can read.
