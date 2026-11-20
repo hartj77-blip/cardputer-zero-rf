@@ -71,6 +71,7 @@ if [ -e /sys/class/power_supply ]; then
         [ -r "$d/status" ] && note "battery status: $(cat "$d/status")"
     done
 fi
+note "swap:   $( (swapon --show=NAME,SIZE,USED --noheadings 2>/dev/null | tr -s ' ' | tr '\n' ';') || true)$( [ -e /sys/block/zram0 ] && echo ' (zram present)' || echo ' (no zram)')"
 [ -e /sys/class/rtc/rtc0 ] && note "clock chip: $(cat /sys/class/rtc/rtc0/name 2>/dev/null)" || note "clock chip: none found"
 IDLE_W=$(power_avg 5)
 [ -n "$IDLE_W" ] && note "power draw now, radio idle: $IDLE_W W" || note "no battery gauge readings"

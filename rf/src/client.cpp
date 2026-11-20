@@ -74,6 +74,19 @@ bool RadioClient::poll(int wait_ms, RadioEvents& ev) {
             }
         } else if (line.rfind("D ", 0) == 0) {
             ev.decoded.push_back(line.substr(2));
+        } else if (line.rfind("R ", 0) == 0) {
+            // "R stereo|mono [<id> <8-character name>\t<text>]"
+            ev.has_station = true;
+            ev.stereo = line.rfind("R stereo", 0) == 0;
+            size_t sp = line.find(' ', 2);
+            std::string rest = sp == std::string::npos ? "" : line.substr(sp + 1);
+            ev.station_id = ev.station_name = ev.station_text = "";
+            size_t tab = rest.find('\t');
+            if (rest.size() >= 5 && tab != std::string::npos) {
+                ev.station_id = rest.substr(0, 4);
+                ev.station_name = rest.substr(5, tab - 5);
+                ev.station_text = rest.substr(tab + 1);
+            }
         } else if (line.rfind("E ", 0) == 0) {
             ev.error = line.substr(2);
             ev.has_error = true;

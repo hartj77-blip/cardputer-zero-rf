@@ -18,6 +18,9 @@ struct RadioEvents {
     std::vector<std::string> decoded;   // decoder output lines (JSON from rtl_433)
     std::string error;                  // latest problem reported; "" if none
     bool has_error = false;
+    // Broadcast FM: set when the station's details changed.
+    bool has_station = false, stereo = false;
+    std::string station_id, station_name, station_text;
 };
 
 class RadioClient {

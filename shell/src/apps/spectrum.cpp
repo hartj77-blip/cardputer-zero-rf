@@ -86,6 +86,10 @@ public:
         high_label_ = label(root, "", &lv_font_montserrat_12, kMuted);
         lv_obj_align(high_label_, LV_ALIGN_BOTTOM_RIGHT, -4, -1);
         hint_label_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        // Between the two band-edge frequencies; long station text is cut short.
+        lv_obj_set_width(hint_label_, 212);
+        lv_label_set_long_mode(hint_label_, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -1);
 
         // Blue -> cyan -> yellow -> white, weakest to strongest.
@@ -115,7 +119,8 @@ public:
                       "A save channel    L saved channels\n"
                       "K keep playing after leaving\n"
                       "P peak hold    C centre on peak\n"
-                      "R record IQ    F follow rig    T set rig",
+                      "W record audio    R record IQ\n"
+                      "F follow rig    T set rig",
                       &lv_font_montserrat_12, kText);
         lv_obj_set_style_bg_color(help_, c(kSurface), 0);
         lv_obj_set_style_bg_opa(help_, LV_OPA_COVER, 0);
@@ -235,6 +240,11 @@ public:
             send_gain();
             break;
         case 'm': case 'M':
+            // The audio recording is one mode; changing it ends the file.
+            if (taping_) {
+                taping_ = false;
+                shell_toast("Saved " + tape_name_);
+            }
             // The first press picks the mode that suits this frequency: the
             // right sideband on an amateur band, AM on the airband, and so on.
             if (mode_ == 0 && !mode_picked_) {
@@ -273,6 +283,27 @@ public:
             lv_obj_move_foreground(help_);
             return true;
         case 'r': case 'R': toggle_record(); break;
+        case 'w': case 'W':
+            if (taping_) {
+                taping_ = false;
+                client_.send("recordaudio off");
+                shell_toast("Saved " + tape_name_);
+            } else if (!mode_) {
+                shell_toast("Press M to listen first");
+            } else {
+                std::string dir = home_dir() + "/Recordings";
+                mkdir(dir.c_str(), 0755);
+                char when[32];
+                time_t t = time(nullptr);
+                tm lt{};
+                localtime_r(&t, &lt);
+                strftime(when, sizeof when, "%Y%m%d-%H%M%S", &lt);
+                tape_name_ = fmt("radio_%.4fMHz_%s.wav", freq_ / 1e6, when);
+                client_.send("recordaudio " + dir + "/" + tape_name_);
+                taping_ = true;
+                shell_toast("Recording the audio");
+            }
+            break;
         case 'f': case 'F':
             if (rig_.active()) {
                 rig_.stop();
@@ -367,9 +398,22 @@ private:
             return;
         }
         auto& frames = ev.frames;
+        if (ev.has_station) {
+            // Broadcast FM: stereo or not, and the station's name and text from RDS.
+            stereo_ = ev.stereo;
+            station_name_ = ev.station_name;
+            while (!station_name_.empty() && station_name_.back() == ' ') station_name_.pop_back();
+            station_text_ = ev.station_text;
+            update_labels();
+        }
         if (ev.has_error && ev.error != error_) {
             error_ = ev.error;
-            if (error_.rfind("recording stopped", 0) == 0 || error_ == "can't write the recording") {
+            if (error_.rfind("audio recording stopped", 0) == 0 || error_ == "can't write the audio recording") {
+                taping_ = false;
+                shell_toast(error_ == "can't write the audio recording" ? "Can't write the audio recording" : "Audio recording stopped: storage full");
+                update_labels();
+                error_.clear();
+            } else if (error_.rfind("recording stopped", 0) == 0 || error_ == "can't write the recording") {
                 recording_ = false;
                 shell_toast(error_ == "recording stopped: storage full" ? "Recording stopped: storage full"
                             : error_ == "recording stopped: retuned" ? "Recording stopped (retuned)" : "Can't write the recording");
@@ -405,6 +449,9 @@ private:
         // Slide the picture so signals stay under their frequency.
         shift_columns(int(std::lround((freq_ - hz) / kSpans[span_] * kW)));
         freq_ = hz;
+        station_name_.clear();   // a new frequency is a new station
+        station_text_.clear();
+        stereo_ = false;
         client_.send(fmt("tune %.0f", freq_));
         update_labels();
         lv_obj_invalidate(canvas_);
@@ -636,6 +683,7 @@ private:
         if (mode_) info += fmt("  " LV_SYMBOL_VOLUME_MAX " %s%s", kModeNames[mode_], squelch_ ? " SQ" : "");
         else info += fmt("  gain %s", gain.c_str());
         if (recording_) info = LV_SYMBOL_SAVE " REC  " + info;
+        if (taping_) info = LV_SYMBOL_AUDIO " REC  " + info;
         if (rig_.active()) info = LV_SYMBOL_LOOP " " + info;
         lv_label_set_text(info_label_, info.c_str());
         double half = kSpans[span_] / 2;
@@ -647,7 +695,9 @@ private:
         std::string hint = band ? std::string(band->name) + "   " : "";
         if (naming_) hint = "Enter save   Esc cancel";
         else if (!entry_.empty()) hint = "Enter go   Esc cancel";
-        else if (mode_ && signal_db_ > -100) hint += fmt("signal %+.0f dB", signal_db_);
+        else if (mode_ == 1 && !station_name_.empty())
+            hint = station_name_ + (stereo_ ? "  stereo" : "") + (station_text_.empty() ? "" : "   " + station_text_);
+        else if (mode_ && signal_db_ > -100) hint += fmt("signal %+.0f dB%s", signal_db_, mode_ == 1 && stereo_ ? "  stereo" : "");
         else hint += band ? "M listen  H keys" : "B bands  M listen  H keys";
         lv_label_set_text(hint_label_, hint.c_str());
     }
@@ -665,6 +715,8 @@ private:
     int step_ = 4, span_ = 1, gain_ = 0, mode_ = 0;
     bool mode_picked_ = false;
     float signal_db_ = -200;   // tuned signal above the noise floor
+    bool stereo_ = false, taping_ = false;
+    std::string station_name_, station_text_, tape_name_;
     int label_ticks_ = 0;
     RigLink rig_;
     bool squelch_ = false, bands_open_ = false, recording_ = false;

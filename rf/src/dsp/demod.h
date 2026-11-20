@@ -4,6 +4,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -32,13 +33,24 @@ private:
     std::vector<T> hist_;   // the last ntaps-1 inputs, then the new block
 };
 
+class FmBroadcast;
+class RdsDecoder;
+
 class Demod {
 public:
+    ~Demod();
     // rate: input sample rate in Hz (at least 64 kHz). mode must not be Off.
     Demod(Mode mode, double rate);
     double audio_rate() const { return audio_rate_; }
+    // 2 for broadcast FM (left and right in turn), 1 for everything else.
+    int channels() const { return mode_ == Mode::Wfm ? 2 : 1; }
     // Appends 16-bit audio samples to `out`.
     void run(const cf32* in, size_t n, std::vector<int16_t>& out);
+    // Broadcast FM extras: whether the station is in stereo, and its RDS
+    // data (null in other modes). station_changed() forgets both on a retune.
+    bool stereo() const;
+    const RdsDecoder* rds() const;
+    void station_changed();
 
 private:
     Mode mode_;
@@ -48,7 +60,7 @@ private:
     FirDecim<cf32> channel_, channel2_;
     std::vector<cf32> stage_buf_;
     void run_channel(const cf32* in, size_t n);
-    FirDecim<float> audio_;       // broadcast FM only: discriminator rate to audio rate
+    std::unique_ptr<FmBroadcast> fm_;   // broadcast FM only: stereo and RDS from the discriminator
     std::vector<cf32> chan_buf_;
     std::vector<float> disc_buf_, audio_buf_;
     cf32 prev_{1, 0};

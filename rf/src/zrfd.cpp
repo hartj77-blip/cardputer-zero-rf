@@ -30,6 +30,7 @@
 #include "dsp/spectrum.h"
 #include "ft8.h"
 #include "proto.h"
+#include "rds.h"
 #include "sdr/source.h"
 
 using namespace zrf;
@@ -52,6 +53,7 @@ struct Settings {
     std::optional<double> squelch;   // mute audio unless the signal is this many dB above the noise
     bool ft8 = false;             // decode FT8 on the tuned (dial) frequency, upper sideband
     std::string record;           // file to write raw IQ to; "" = not recording
+    std::string audio_record;     // WAV file to write the audio being listened to; "" = not recording
     std::string tool;             // hand the receiver to another program: "sensors", "aircraft", "aprs", "server"; "" = none
 };
 
@@ -70,6 +72,9 @@ struct Shared {
     uint64_t error_seq = 0;
     bool running = false;
     double audio_rate = 0;    // 0 when not listening
+    bool stereo = false;      // broadcast FM: the station is in stereo
+    std::string station;      // broadcast FM: "<id> <name>\t<text>" from RDS, "" when unknown
+    uint64_t station_seq = 0;
     std::vector<std::string> decoded;   // decoder output lines not yet sent to clients
     double recorded_bytes = 0;
     double signal_db = 0;     // tuned signal above the noise floor, from the last frame
@@ -95,16 +100,16 @@ void report_error(const std::string& msg) {
 
 // Where demodulated audio goes: "none", "file:<path>" (raw 16-bit mono) or
 // "cmd:<shell command>" fed on its standard input, with %r replaced by the
-// sample rate.
+// sample rate and %c by the number of channels (2 for broadcast FM).
 // Default: sox's play, which the base OS's Media app also uses; else aplay.
 std::string g_audio_spec =
-    "cmd:if command -v play >/dev/null; then exec play -q -t raw -r %r -e signed -b 16 -c 1 -; "
-    "else exec aplay -q -t raw -f S16_LE -c 1 -r %r; fi";
+    "cmd:if command -v play >/dev/null; then exec play -q -t raw -r %r -e signed -b 16 -c %c -; "
+    "else exec aplay -q -t raw -f S16_LE -c %c -r %r; fi";
 
 class AudioSink {
 public:
     ~AudioSink() { close(); }
-    bool open(double rate) {
+    bool open(double rate, int channels) {
         close();
         if (g_audio_spec == "none") return true;
         if (g_audio_spec.rfind("file:", 0) == 0) {
@@ -115,6 +120,7 @@ public:
         std::string cmd = g_audio_spec.substr(4);
         for (size_t at; (at = cmd.find("%r")) != std::string::npos;)
             cmd.replace(at, 2, std::to_string(std::lround(rate)));
+        for (size_t at; (at = cmd.find("%c")) != std::string::npos;) cmd.replace(at, 2, std::to_string(channels));
         int p[2];
         if (pipe2(p, O_CLOEXEC) != 0) return false;
         pid_ = fork();
@@ -347,6 +353,73 @@ private:
     size_t since_check_ = 0;
 };
 
+// What is being listened to, as a WAV file any player opens.
+class WavWriter {
+public:
+    ~WavWriter() { close(); }
+    bool active() const { return f_ != nullptr; }
+    const std::string& path() const { return path_; }
+    bool open(const std::string& path, int rate, int channels) {
+        close();
+        f_ = std::fopen(path.c_str(), "wb");
+        if (!f_) return false;
+        path_ = path;
+        rate_ = rate;
+        channels_ = channels;
+        bytes_ = 0;
+        header();
+        return true;
+    }
+    // False when writing failed or storage is nearly full; the file is closed.
+    bool write(const std::vector<int16_t>& pcm) {
+        if (pcm.empty()) return true;
+        bool ok = std::fwrite(pcm.data(), 2, pcm.size(), f_) == pcm.size();
+        bytes_ += uint32_t(pcm.size() * 2);
+        if (ok && (since_check_ += pcm.size() * 2) > 128000) {   // about once a second
+            since_check_ = 0;
+            struct statvfs v {};
+            if (statvfs(path_.c_str(), &v) == 0 && double(v.f_bavail) * double(v.f_frsize) < 50e6) ok = false;
+            // Keep the sizes in the header right as we go, so a recording cut
+            // short by a flat battery still plays.
+            long at = std::ftell(f_);
+            header();
+            std::fseek(f_, at, SEEK_SET);
+            std::fflush(f_);
+        }
+        if (!ok) close();
+        return ok;
+    }
+    void close() {
+        if (!f_) return;
+        header();
+        std::fclose(f_);
+        f_ = nullptr;
+    }
+private:
+    void header() {
+        auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f_); };
+        auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f_); };
+        std::fseek(f_, 0, SEEK_SET);
+        std::fwrite("RIFF", 1, 4, f_);
+        u32(36 + bytes_);
+        std::fwrite("WAVEfmt ", 1, 8, f_);
+        u32(16);
+        u16(1);   // plain 16-bit samples
+        u16(uint16_t(channels_));
+        u32(uint32_t(rate_));
+        u32(uint32_t(rate_ * channels_ * 2));
+        u16(uint16_t(channels_ * 2));
+        u16(16);
+        std::fwrite("data", 1, 4, f_);
+        u32(bytes_);
+    }
+    FILE* f_ = nullptr;
+    std::string path_;
+    int rate_ = 0, channels_ = 1;
+    uint32_t bytes_ = 0;
+    size_t since_check_ = 0;
+};
+
 bool apply(Source& src, const Settings& s, std::string& err) {
     if (!src.set_rate(s.rate)) { err = "sample rate not supported"; return false; }
     if (!src.set_freq(s.freq + s.offset)) { err = "frequency out of range"; return false; }
@@ -366,9 +439,11 @@ void worker(std::string spec) {
     std::vector<int16_t> pcm;
     Mode demod_mode = Mode::Off;
     double demod_rate = 0;
+    WavWriter wav;
     auto stop_audio = [&] {
         demod.reset();
         sink.close();
+        wav.close();
         demod_mode = Mode::Off;
         std::lock_guard<std::mutex> lk(g.mu);
         g.audio_rate = 0;
@@ -393,6 +468,9 @@ void worker(std::string spec) {
         ft8_slot = -1;
         if (ft8_thread.joinable()) ft8_thread.join();
     };
+    double station_freq = 0;
+    std::string station_sent;
+    bool stereo_sent = false;
     Recorder recorder;
     Decoder decoder;
     double decoder_freq = 0;
@@ -411,6 +489,7 @@ void worker(std::string spec) {
             if (g.subscribers == 0) {
                 // Nobody watching or listening: release the receiver and sleep.
                 src.reset();
+                wav.close();
                 ft8_demod.reset();
                 ft8_slot = -1;
                 recorder.close();
@@ -545,6 +624,9 @@ void worker(std::string spec) {
             // With squelch on, stay muted until a frame shows a signal here.
             frames_below = 5;
             squelch_open = !cur.squelch;
+            // A new frequency is a new station: forget the last one's name.
+            if (demod && cur.freq != station_freq) demod->station_changed();
+            station_freq = cur.freq;
             // Retuning keeps the audio path; only a new mode or rate rebuilds it.
             if (cur.mode != demod_mode || cur.rate != demod_rate) {
                 stop_audio();
@@ -552,7 +634,7 @@ void worker(std::string spec) {
                     demod = std::make_unique<Demod>(cur.mode, cur.rate);
                     demod_mode = cur.mode;
                     demod_rate = cur.rate;
-                    if (!sink.open(demod->audio_rate())) notify("audio output failed");
+                    if (!sink.open(demod->audio_rate(), demod->channels())) notify("audio output failed");
                     std::lock_guard<std::mutex> lk(g.mu);
                     g.audio_rate = demod->audio_rate();
                 }
@@ -572,6 +654,40 @@ void worker(std::string spec) {
             demod->run(block.data(), kNfft, pcm);
             if (cur.squelch && !squelch_open) std::fill(pcm.begin(), pcm.end(), int16_t(0));
             if (!sink.write(pcm)) notify("audio output failed");
+            // Record what is heard; with squelch on, only while it is open.
+            if (wav.active() && cur.audio_record != wav.path()) wav.close();
+            if (!wav.active() && !cur.audio_record.empty() &&
+                !wav.open(cur.audio_record, int(std::lround(demod->audio_rate())), demod->channels())) {
+                notify("can't write the audio recording");
+                std::lock_guard<std::mutex> lk(g.mu);
+                g.want.audio_record.clear();
+                cur.audio_record.clear();
+            }
+            if (wav.active() && !(cur.squelch && !squelch_open) && !wav.write(pcm)) {
+                notify("audio recording stopped: storage full");
+                std::lock_guard<std::mutex> lk(g.mu);
+                g.want.audio_record.clear();
+                cur.audio_record.clear();
+            }
+            // Tell clients when the station's stereo state, name or text changes.
+            std::string station;
+            if (const RdsDecoder* rds = demod->rds()) {
+                if (!rds->name().empty() || !rds->text().empty()) {
+                    char id[8];
+                    std::snprintf(id, sizeof id, "%04X", rds->pi());
+                    station = std::string(id) + " " + rds->name() + "\t" + rds->text();
+                }
+            }
+            bool stereo = demod->stereo();
+            if (station != station_sent || stereo != stereo_sent) {
+                station_sent = station;
+                stereo_sent = stereo;
+                std::lock_guard<std::mutex> lk(g.mu);
+                g.station = station;
+                g.stereo = stereo;
+                ++g.station_seq;
+                wake_main();
+            }
         }
         if (ft8_demod) {
             ft8_pcm.clear();
@@ -726,7 +842,20 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
         if (!parse_mode(arg, m)) return "err mode needs off, wfm, nfm, am, usb, lsb or cw";
         if ((m != Mode::Off) != c.listening) change_subscribers(c.listening ? -1 : +1);
         c.listening = m != Mode::Off;
-        update([&](Settings& s) { s.mode = m; });
+        // An audio recording is one mode: changing it ends the file.
+        update([&](Settings& s) {
+            if (s.mode != m) s.audio_record.clear();
+            s.mode = m;
+        });
+        return "ok";
+    }
+    if (cmd == "recordaudio") {
+        std::string path = line.size() > 12 ? line.substr(12) : "";
+        if (path.empty()) return "err recordaudio needs a file path or off";
+        bool on = path != "off";
+        if (on && path[0] != '/') return "err recordaudio needs an absolute path";
+        if (on && !c.listening) return "err start listening first (mode ...)";
+        update([&](Settings& s) { s.audio_record = on ? path : ""; });
         return "ok";
     }
     if (cmd == "record") {
@@ -779,11 +908,11 @@ std::string handle(Client& c, const std::string& line, const std::string& spec) 
     if (cmd == "status") {
         std::lock_guard<std::mutex> lk(g.mu);
         char buf[480];
-        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s ppm=%d biastee=%s fps=%d mode=%s audio_rate=%.0f squelch=%s signal=%.1f open=%d decode=%s recorded=%.0f running=%d source=%s",
+        std::snprintf(buf, sizeof buf, "ok freq=%.0f offset=%.0f rate=%.0f gain=%s ppm=%d biastee=%s fps=%d mode=%s audio_rate=%.0f stereo=%d squelch=%s signal=%.1f open=%d decode=%s recorded=%.0f running=%d source=%s",
                       g.want.freq, g.want.offset, g.want.rate,
                       g.want.gain ? std::to_string(*g.want.gain).c_str() : "auto", g.want.ppm,
                       g.want.bias_tee ? "on" : "off", g.want.fps,
-                      mode_name(g.want.mode), g.audio_rate,
+                      mode_name(g.want.mode), g.audio_rate, g.stereo ? 1 : 0,
                       g.want.squelch ? std::to_string(int(*g.want.squelch)).c_str() : "off", g.signal_db,
                       g.squelch_open ? 1 : 0, g.want.ft8 ? "ft8" : g.want.tool.empty() ? "off" : g.want.tool.c_str(), g.recorded_bytes, g.running ? 1 : 0, spec.c_str());
         std::string out = buf;
@@ -813,7 +942,7 @@ int main(int argc, char** argv) {
         else if (a == "--audio" && i + 1 < argc) g_audio_spec = argv[++i];
         else {
             std::fprintf(stderr, "usage: zrfd [--source sim|file:<path>|rtlsdr[:n]] [--socket <path>] [--idle-exit <seconds>]\n"
-                                 "            [--audio none|file:<path>|cmd:<player command, %%r = sample rate>]\n");
+                                 "            [--audio none|file:<path>|cmd:<player command, %%r = sample rate, %%c = channels>]\n");
             return a == "--help" ? 0 : 2;
         }
     }
@@ -840,7 +969,7 @@ int main(int argc, char** argv) {
 
     std::thread th(worker, spec);
     std::map<int, Client> clients;
-    uint64_t sent_seq = 0, sent_error_seq = 0;
+    uint64_t sent_seq = 0, sent_error_seq = 0, sent_station_seq = 0;
     auto last_client = std::chrono::steady_clock::now();
 
     while (!g_quit) {
@@ -865,17 +994,25 @@ int main(int argc, char** argv) {
             while (read(g_wake[0], buf, sizeof buf) > 0) {}
             std::vector<float> frame;
             double freq = 0, rate = 0;
-            std::string error;
+            std::string error, station;
+            bool station_changed = false, stereo = false;
             std::vector<std::string> decoded;
             {
                 std::lock_guard<std::mutex> lk(g.mu);
                 decoded.swap(g.decoded);
                 if (g.seq != sent_seq) { frame = g.frame; freq = g.frame_freq; rate = g.frame_rate; sent_seq = g.seq; }
                 if (g.error_seq != sent_error_seq) { error = g.error; sent_error_seq = g.error_seq; }
+                if (g.station_seq != sent_station_seq) {
+                    station = g.station;
+                    stereo = g.stereo;
+                    station_changed = true;
+                    sent_station_seq = g.station_seq;
+                }
             }
             for (auto& [fd, c] : clients) {
                 if ((!c.cols && !c.listening && !c.decoding && !c.recording) || c.out.size() > kMaxQueued) continue;
                 if (!error.empty()) c.out += "E " + error + "\n";
+                if (station_changed) c.out += std::string("R ") + (stereo ? "stereo " : "mono ") + station + "\n";
                 if (c.decoding)
                     for (auto& l : decoded) c.out += "D " + l + "\n";
                 if (frame.empty() || !c.cols) continue;
@@ -929,7 +1066,7 @@ int main(int argc, char** argv) {
                 // Audio belongs to the client that asked for it.
                 bool others = false;
                 for (auto& [other_fd, other] : clients) others = others || other.listening;
-                if (!others) update([](Settings& s) { s.mode = Mode::Off; });
+                if (!others) update([](Settings& s) { s.mode = Mode::Off; s.audio_record.clear(); });
             }
             if (was_decoding) {
                 bool others = false;

@@ -1,5 +1,7 @@
 #include "dsp/demod.h"
 
+#include "dsp/fm_broadcast.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -119,15 +121,13 @@ Demod::Demod(Mode mode, double rate)
       audio_rate_(make_plan(mode, rate).chan_rate / make_plan(mode, rate).audio_decim),
       channel_(channel_filter(make_plan(mode, rate), rate)),
       channel2_(channel2_filter(make_plan(mode, rate), rate)),
-      audio_(make_plan(mode, rate).audio_decim, 15e3 / make_plan(mode, rate).chan_rate,
-             make_plan(mode, rate).audio_decim == 1 ? 1 : 6 * make_plan(mode, rate).audio_decim + 1),
       sideband_(1, (mode == Mode::Cw ? kCwHalfWidth : kSsbHalfWidth) / audio_rate_, is_sideband(mode) ? 257 : 1) {
     Plan p = make_plan(mode, rate);
     // Full deviation (75 kHz broadcast, 5 kHz narrow) maps to full scale.
     double deviation = mode == Mode::Wfm ? 75e3 : 5e3;
     fm_gain_ = float(p.chan_rate / (2 * M_PI * deviation));
-    // 75 microsecond de-emphasis (Americas, Korea). Europe uses 50; to be a setting.
-    deemph_a_ = float(1 - std::exp(-1.0 / (audio_rate_ * 75e-6)));
+    deemph_a_ = 0;
+    if (mode == Mode::Wfm) fm_ = std::make_unique<FmBroadcast>(p.chan_rate, p.audio_decim);
     if (is_sideband(mode)) {
         // Shift the wanted slice to the middle by `a` a sample, and back out
         // to its audio pitch by `b`.
@@ -137,6 +137,14 @@ Demod::Demod(Mode mode, double rate)
         pre_step_ = cf32(float(std::cos(a)), float(std::sin(a)));
         post_step_ = cf32(float(std::cos(b)), float(std::sin(b)));
     }
+}
+
+Demod::~Demod() = default;
+
+bool Demod::stereo() const { return fm_ && fm_->stereo(); }
+const RdsDecoder* Demod::rds() const { return fm_ ? &fm_->rds() : nullptr; }
+void Demod::station_changed() {
+    if (fm_) fm_->reset();
 }
 
 void Demod::run_channel(const cf32* in, size_t n) {
@@ -189,11 +197,7 @@ void Demod::run(const cf32* in, size_t n, std::vector<int16_t>& out) {
             prev_ = s;
         }
         if (mode_ == Mode::Wfm) {
-            audio_.run(disc_buf_.data(), disc_buf_.size(), audio_buf_);
-            for (float& v : audio_buf_) {
-                deemph_y_ += (v - deemph_y_) * deemph_a_;
-                v = deemph_y_;
-            }
+            fm_->run(disc_buf_.data(), disc_buf_.size(), audio_buf_);   // left, right, left, right...
         } else {
             audio_buf_ = disc_buf_;
         }

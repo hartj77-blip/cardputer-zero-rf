@@ -37,6 +37,11 @@ or browsing files. Opening Spectrum again picks the audio back up; opening anoth
 because that app needs the receiver. Spectrum reopens where you left it (frequency, width, step,
 gain and squelch). **H** shows all the keys.
 
+On broadcast FM the bottom line shows the station's name and text (from RDS) and whether it is in
+stereo; headphones get both channels. **W** records what you are hearing to a WAV file in
+`~/Recordings`, which the Media app plays and Sync copies off the device. With squelch on, only the
+moments with a signal are recorded.
+
 **F** follows a transceiver's dial through Hamlib, so the display becomes a panadapter for the
 rig, and **T** sends the displayed frequency to the rig. Set the rig up in Station.
 
