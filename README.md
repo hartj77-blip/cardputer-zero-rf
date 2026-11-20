@@ -108,16 +108,19 @@ Wireless weather stations, tyre sensors, doorbells and remotes, decoded by
 2. Copy the kit over and run its installer; the same page has the commands.
 3. [docs/BRINGUP.md](docs/BRINGUP.md): the first-run check on a real unit, and what to send back.
 
-Build the kit with:
+The kit comes from CI: the *Device kit (arm64)* job builds it and offers it as a downloadable
+artifact. **It has to be built on Debian trixie**, the system the device runs. Debian and Ubuntu
+ship the RTL-SDR library under different names (`librtlsdr.so.0` and `librtlsdr.so.2`), so a
+radio program built on Ubuntu will not start on the device. CI builds in a `debian:trixie` arm64
+container, and the packing script refuses a program linked to the wrong one. To build it yourself
+on an arm64 machine or under emulation:
 
 ```sh
-sudo apt install g++-aarch64-linux-gnu       # plus arm64 librtlsdr; CI builds on an arm64 runner instead
-cmake -S shell -B build/device -DZS_BACKEND=device -DCMAKE_TOOLCHAIN_FILE=$PWD/base/cmake/aarch64-linux-gnu.cmake
-cmake --build build/device -j
-STRIP=aarch64-linux-gnu-strip tools/package-device.sh build/device dist/zeroos-rf-arm64.tar.gz
+docker run --rm --platform linux/arm64 -v "$PWD":/src -w /src debian:trixie sh -c '
+  apt-get update && apt-get install -y git cmake g++ pkg-config librtlsdr-dev binutils file &&
+  cmake -S shell -B build/device -DZS_BACKEND=device && cmake --build build/device -j &&
+  tools/package-device.sh build/device dist/zeroos-rf-arm64.tar.gz'
 ```
-
-CI's *Device kit (arm64)* job produces the same file as a downloadable artifact.
 
 For a card with everything preinstalled, run the **Build image** workflow from the Actions tab
 (1.5 to 3 hours), or `image/build.sh build/device` locally. It runs the base's image builder from
