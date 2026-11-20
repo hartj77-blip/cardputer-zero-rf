@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "apps/background_radio.h"
 #include "apps/common.h"
 #include "apps/radio_link.h"
 #include "aprs.h"
@@ -45,6 +46,7 @@ public:
     }
 
     void build(lv_obj_t* root) override {
+        BackgroundRadio::get().stop();   // this app needs the receiver
         khz_ = prefs::get_int("rf.aprs_khz", 144390);
         have_home_ = zrf::grid_to_latlon(prefs::get_str("rf.grid", ""), home_lat_, home_lon_);
 

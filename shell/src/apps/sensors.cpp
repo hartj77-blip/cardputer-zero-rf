@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "apps/background_radio.h"
 #include "apps/common.h"
 #include "apps/radio_link.h"
 #include "json_flat.h"
@@ -62,6 +63,7 @@ public:
     }
 
     void build(lv_obj_t* root) override {
+        BackgroundRadio::get().stop();   // this app needs the receiver
         root_ = root;
         title_ = label(root, "", &lv_font_montserrat_14, kAccent);
         lv_obj_set_pos(title_, 4, 0);
