@@ -18,6 +18,15 @@ if [ -f "${ROOTFS_DIR}/etc/zeroos/update.conf" ]; then
     sed -i 's|^UPDATE_URL=.*|UPDATE_URL=https://github.com/hartj77-blip/cardputer-zero-rf/releases/latest/download|' "${ROOTFS_DIR}/etc/zeroos/update.conf"
     grep -q 'cardputer-zero-rf/releases' "${ROOTFS_DIR}/etc/zeroos/update.conf"
 fi
+# ZeroShell on the LCD, not on fb0 (usually HDMI): see zeroshell-lcd.conf.
+install -m 0755 files/zeroos-lcd-fb            "${ROOTFS_DIR}/usr/bin/zeroos-lcd-fb"
+install -D -m 0644 files/zeroshell-lcd.conf    "${ROOTFS_DIR}/etc/systemd/system/zeroshell.service.d/zeroos-rf-lcd.conf"
+# The base unblanks fb0 after console-setup; unblank the LCD as well.
+install -d "${ROOTFS_DIR}/etc/systemd/system/console-setup.service.d"
+cat > "${ROOTFS_DIR}/etc/systemd/system/console-setup.service.d/zeroos-rf-unblank.conf" <<'UNIT'
+[Service]
+ExecStartPost=-/bin/sh -c 'f=$$(/usr/bin/zeroos-lcd-fb 0); b=/sys/class/graphics/$${f#/dev/}/blank; echo 1 > $$b; echo 0 > $$b'
+UNIT
 echo "ZeroOS RF @ZEROOS_RF_VERSION@ (built $(date -u +%Y-%m-%d))" > "${ROOTFS_DIR}/etc/zeroos-rf-release"
 
 on_chroot << CHROOT
