@@ -9,6 +9,15 @@ install -m 0755 files/bringup.sh               "${ROOTFS_DIR}/usr/bin/zeroos-rf-
 install -m 0644 files/60-zeroos-rf.rules       "${ROOTFS_DIR}/etc/udev/rules.d/60-zeroos-rf.rules"
 install -m 0644 files/zeroos-rf-blacklist.conf "${ROOTFS_DIR}/etc/modprobe.d/zeroos-rf-blacklist.conf"
 install -D -m 0644 files/THIRD_PARTY.md        "${ROOTFS_DIR}/usr/share/doc/zeroos-rf/THIRD_PARTY.md"
+# Over-the-air updates: the base's Update app installs the plain ZeroOS package
+# from cardputer-zero's releases, which would replace this RF home screen. Until
+# RF publishes its own update package, look for updates here instead, where
+# there are none yet: the Update app then reports no update rather than
+# installing the wrong one.
+if [ -f "${ROOTFS_DIR}/etc/zeroos/update.conf" ]; then
+    sed -i 's|^UPDATE_URL=.*|UPDATE_URL=https://github.com/hartj77-blip/cardputer-zero-rf/releases/latest/download|' "${ROOTFS_DIR}/etc/zeroos/update.conf"
+    grep -q 'cardputer-zero-rf/releases' "${ROOTFS_DIR}/etc/zeroos/update.conf"
+fi
 # ZeroShell on the LCD, not on fb0 (usually HDMI): see zeroshell-lcd.conf.
 install -m 0755 files/zeroos-lcd-fb            "${ROOTFS_DIR}/usr/bin/zeroos-lcd-fb"
 install -D -m 0644 files/zeroshell-lcd.conf    "${ROOTFS_DIR}/etc/systemd/system/zeroshell.service.d/zeroos-rf-lcd.conf"

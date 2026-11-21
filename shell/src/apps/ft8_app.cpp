@@ -64,19 +64,19 @@ public:
             for (int i = 0; i < int(std::size(kDials)); ++i)
                 if (std::string(kDials[i].band) == b->name) band_ = i;
 
-        title_ = label(root, "", &lv_font_montserrat_14, kAccent);
+        title_ = label(root, "", &zs_font_14, kAccent);
         lv_obj_set_pos(title_, 4, 0);
-        status_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        status_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(status_, LV_ALIGN_TOP_RIGHT, -4, 2);
         for (int r = 0; r < kRows; ++r)
             for (int c = 0; c < 4; ++c) {
-                cells_[r][c] = label(root, "", &lv_font_montserrat_12, kText);
+                cells_[r][c] = label(root, "", &zs_font_12, kText);
                 lv_obj_set_pos(cells_[r][c], kCol[c], kTopH + r * kRowH);
             }
         hint_ = label(root, LV_SYMBOL_LEFT LV_SYMBOL_RIGHT " band   " LV_SYMBOL_UP LV_SYMBOL_DOWN " scroll   C clear",
-                      &lv_font_montserrat_12, kMuted);
+                      &zs_font_12, kMuted);
         lv_obj_align(hint_, LV_ALIGN_BOTTOM_MID, 0, -1);
-        message_ = label(root, "", &lv_font_montserrat_14, kMuted);
+        message_ = label(root, "", &zs_font_14, kMuted);
         lv_obj_set_style_text_align(message_, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(message_, LV_ALIGN_CENTER, 0, 4);
         set_message("Starting radio...");

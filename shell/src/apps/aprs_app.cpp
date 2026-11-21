@@ -50,9 +50,9 @@ public:
         khz_ = prefs::get_int("rf.aprs_khz", 144390);
         have_home_ = zrf::grid_to_latlon(prefs::get_str("rf.grid", ""), home_lat_, home_lon_);
 
-        title_ = label(root, "", &lv_font_montserrat_14, kAccent);
+        title_ = label(root, "", &zs_font_14, kAccent);
         lv_obj_set_pos(title_, 4, 0);
-        hint_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        hint_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(hint_, LV_ALIGN_TOP_RIGHT, -4, 2);
         list_ = make_list(root, 0, 18, kScreenW, kContentH - 18);
         finish_list(list_);
@@ -61,11 +61,11 @@ public:
         style_panel(detail_);
         lv_obj_set_pos(detail_, 4, 18);
         lv_obj_set_size(detail_, kScreenW - 8, kContentH - 20);
-        detail_text_ = label(detail_, "", &lv_font_montserrat_12, kText);
+        detail_text_ = label(detail_, "", &zs_font_12, kText);
         lv_obj_set_width(detail_text_, kScreenW - 30);
         lv_obj_add_flag(detail_, LV_OBJ_FLAG_HIDDEN);
 
-        message_ = label(root, "", &lv_font_montserrat_14, kMuted);
+        message_ = label(root, "", &zs_font_14, kMuted);
         lv_obj_set_style_text_align(message_, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(message_, LV_ALIGN_CENTER, 0, 8);
         set_message("Starting radio...");

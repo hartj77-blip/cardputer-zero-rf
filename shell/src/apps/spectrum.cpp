@@ -64,9 +64,9 @@ public:
     }
 
     void build(lv_obj_t* root) override {
-        freq_label_ = label(root, "", &lv_font_montserrat_14, kAccent);
+        freq_label_ = label(root, "", &zs_font_14, kAccent);
         lv_obj_set_pos(freq_label_, 4, 0);
-        info_label_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        info_label_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(info_label_, LV_ALIGN_TOP_RIGHT, -4, 2);
 
         pixels_.assign(size_t(kW) * kCanvasH, rgb565(kBg));
@@ -74,18 +74,18 @@ public:
         lv_canvas_set_buffer(canvas_, pixels_.data(), kW, kCanvasH, LV_COLOR_FORMAT_RGB565);
         lv_obj_set_pos(canvas_, 0, kTopH);
 
-        message_ = label(root, "", &lv_font_montserrat_14, kText);
+        message_ = label(root, "", &zs_font_14, kText);
         lv_obj_set_style_bg_color(message_, c(kSurface), 0);
         lv_obj_set_style_bg_opa(message_, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(message_, 6, 0);
         lv_obj_set_style_radius(message_, 6, 0);
         lv_obj_align(message_, LV_ALIGN_CENTER, 0, 10);
 
-        low_label_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        low_label_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(low_label_, LV_ALIGN_BOTTOM_LEFT, 4, -1);
-        high_label_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        high_label_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(high_label_, LV_ALIGN_BOTTOM_RIGHT, -4, -1);
-        hint_label_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        hint_label_ = label(root, "", &zs_font_12, kMuted);
         // Between the two band-edge frequencies; long station text is cut short.
         lv_obj_set_width(hint_label_, 212);
         lv_label_set_long_mode(hint_label_, LV_LABEL_LONG_DOT);
@@ -121,7 +121,7 @@ public:
                       "P peak hold    C centre on peak\n"
                       "W record audio    R record IQ\n"
                       "F follow rig    T set rig",
-                      &lv_font_montserrat_12, kText);
+                      &zs_font_12, kText);
         lv_obj_set_style_bg_color(help_, c(kSurface), 0);
         lv_obj_set_style_bg_opa(help_, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(help_, 8, 0);

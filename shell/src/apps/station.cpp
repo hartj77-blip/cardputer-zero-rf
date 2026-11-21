@@ -38,9 +38,9 @@ const Field kFields[] = {
 class StationApp : public App {
 public:
     void build(lv_obj_t* root) override {
-        title_ = label(root, "", &lv_font_montserrat_14, kAccent);
+        title_ = label(root, "", &zs_font_14, kAccent);
         lv_obj_set_pos(title_, 4, 0);
-        help_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        help_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(help_, LV_ALIGN_BOTTOM_LEFT, 4, -1);
         lv_obj_set_width(help_, kScreenW - 8);
         lv_label_set_long_mode(help_, LV_LABEL_LONG_DOT);
