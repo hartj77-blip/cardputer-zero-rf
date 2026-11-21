@@ -28,22 +28,22 @@ public:
 
     void build(lv_obj_t* root) override {
         BackgroundRadio::get().stop();   // this app needs the receiver
-        title_ = label(root, "1090 MHz", &lv_font_montserrat_14, kAccent);
+        title_ = label(root, "1090 MHz", &zs_font_14, kAccent);
         lv_obj_set_pos(title_, 4, 0);
-        count_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        count_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(count_, LV_ALIGN_TOP_RIGHT, -4, 2);
 
         const char* heads[] = {"Flight", "Alt ft", "Kt", "Hdg", "Position"};
         for (int c = 0; c < 5; ++c) {
-            lv_obj_t* h = label(root, heads[c], &lv_font_montserrat_12, kMuted);
+            lv_obj_t* h = label(root, heads[c], &zs_font_12, kMuted);
             lv_obj_set_pos(h, kCol[c], kTopH);
         }
         for (int r = 0; r < kRows; ++r)
             for (int c = 0; c < 5; ++c) {
-                cells_[r][c] = label(root, "", &lv_font_montserrat_12, kText);
+                cells_[r][c] = label(root, "", &zs_font_12, kText);
                 lv_obj_set_pos(cells_[r][c], kCol[c], kTopH + (r + 1) * kRowH);
             }
-        message_ = label(root, "", &lv_font_montserrat_14, kMuted);
+        message_ = label(root, "", &zs_font_14, kMuted);
         lv_obj_set_style_text_align(message_, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(message_, LV_ALIGN_CENTER, 0, 14);
         set_message("Starting radio...");

@@ -43,16 +43,16 @@ public:
 
     void build(lv_obj_t* root) override {
         BackgroundRadio::get().stop();   // this app needs the receiver
-        state_ = label(root, "", &lv_font_montserrat_16, kMuted);
+        state_ = label(root, "", &zs_font_16, kMuted);
         lv_obj_set_pos(state_, 8, 4);
-        body_ = label(root, "", &lv_font_montserrat_12, kText);
+        body_ = label(root, "", &zs_font_12, kText);
         lv_obj_set_pos(body_, 8, 30);
         lv_obj_set_width(body_, kScreenW - 16);
-        log_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        log_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(log_, LV_ALIGN_BOTTOM_LEFT, 8, -18);
         lv_obj_set_width(log_, kScreenW - 16);
         lv_label_set_long_mode(log_, LV_LABEL_LONG_DOT);
-        hint_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        hint_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(hint_, LV_ALIGN_BOTTOM_MID, 0, -1);
         refresh();
         timer_ = lv_timer_create([](lv_timer_t* t) { static_cast<SdrServerApp*>(lv_timer_get_user_data(t))->pump(); },

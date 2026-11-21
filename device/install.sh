@@ -75,7 +75,8 @@ if [ -n "\$UNIT" ]; then sudo systemctl stop "\$UNIT"; else sudo pkill -i -f app
 trap 'zeroos-rf-stop' EXIT INT TERM
 # Runs as you, not root: the screen and keyboard are open to the video and
 # input groups. If it reports it can't open them, send that message back.
-ZS_FRAMEBUFFER=/dev/fb0 /usr/local/bin/zeroshell-rf
+# It finds the built-in screen itself (/dev/fb_lcd, usually fb1; fb0 is HDMI).
+/usr/local/bin/zeroshell-rf
 START
     cat > /usr/local/bin/zeroos-rf-stop <<STOP
 #!/bin/sh

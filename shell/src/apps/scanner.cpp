@@ -49,9 +49,9 @@ public:
 
     void build(lv_obj_t* root) override {
         BackgroundRadio::get().stop();   // this app needs the receiver
-        title_ = label(root, "", &lv_font_montserrat_14, kAccent);
+        title_ = label(root, "", &zs_font_14, kAccent);
         lv_obj_set_pos(title_, 4, 0);
-        state_ = label(root, "", &lv_font_montserrat_14, kText);
+        state_ = label(root, "", &zs_font_14, kText);
         lv_obj_align(state_, LV_ALIGN_TOP_RIGHT, -4, 0);
 
         pixels_.assign(size_t(kW) * kStripH, rgb565(kBg));
@@ -60,14 +60,14 @@ public:
         lv_obj_set_pos(canvas_, 0, kStripY);
 
         for (int i = 0; i < kRows; ++i) {
-            rows_[i] = label(root, "", &lv_font_montserrat_12, kText);
+            rows_[i] = label(root, "", &zs_font_12, kText);
             lv_obj_set_pos(rows_[i], 8, kStripY + kStripH + 3 + i * 14);
         }
-        empty_ = label(root, "Nothing heard yet", &lv_font_montserrat_12, kMuted);
+        empty_ = label(root, "Nothing heard yet", &zs_font_12, kMuted);
         lv_obj_set_pos(empty_, 8, kStripY + kStripH + 3);
 
         hint_ = label(root, LV_SYMBOL_LEFT LV_SYMBOL_RIGHT " band   Space skip   H hold   L lock out",
-                      &lv_font_montserrat_12, kMuted);
+                      &zs_font_12, kMuted);
         lv_obj_align(hint_, LV_ALIGN_BOTTOM_MID, 0, -1);
 
         start_band();

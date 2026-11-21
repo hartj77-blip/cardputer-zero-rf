@@ -65,9 +65,9 @@ public:
     void build(lv_obj_t* root) override {
         BackgroundRadio::get().stop();   // this app needs the receiver
         root_ = root;
-        title_ = label(root, "", &lv_font_montserrat_14, kAccent);
+        title_ = label(root, "", &zs_font_14, kAccent);
         lv_obj_set_pos(title_, 4, 0);
-        hint_ = label(root, "", &lv_font_montserrat_12, kMuted);
+        hint_ = label(root, "", &zs_font_12, kMuted);
         lv_obj_align(hint_, LV_ALIGN_TOP_RIGHT, -4, 2);
 
         list_ = make_list(root, 0, kTopH, kScreenW, kContentH - kTopH);
@@ -77,11 +77,11 @@ public:
         style_panel(detail_);
         lv_obj_set_pos(detail_, 4, kTopH);
         lv_obj_set_size(detail_, kScreenW - 8, kContentH - kTopH - 2);
-        detail_text_ = label(detail_, "", &lv_font_montserrat_12, kText);
+        detail_text_ = label(detail_, "", &zs_font_12, kText);
         lv_obj_set_width(detail_text_, kScreenW - 30);
         lv_obj_add_flag(detail_, LV_OBJ_FLAG_HIDDEN);
 
-        message_ = label(root, "", &lv_font_montserrat_14, kMuted);
+        message_ = label(root, "", &zs_font_14, kMuted);
         lv_obj_set_style_text_align(message_, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(message_, LV_ALIGN_CENTER, 0, 8);
 
