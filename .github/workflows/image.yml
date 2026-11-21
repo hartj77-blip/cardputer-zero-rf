@@ -11,6 +11,11 @@ on:
         description: Wi-Fi country code (regulatory domain)
         default: US
         required: true
+      compression:
+        description: "fast: quicker build, larger file (for testing). small: smallest file (for releases)."
+        type: choice
+        options: [fast, small]
+        default: fast
 
 permissions:
   contents: read
@@ -68,7 +73,9 @@ jobs:
   image:
     name: SD card image
     needs: programs
-    runs-on: ubuntu-24.04
+    # Native arm64 (free for public repositories): the arm64 system is built
+    # without qemu emulation, the slow part of the build on an x86 runner.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 300
     env:
       BASE_REPO_TOKEN: ${{ secrets.BASE_REPO_TOKEN }}
@@ -101,8 +108,8 @@ jobs:
             coreutils quilt parted debootstrap zerofree zip dosfstools libarchive-tools \
             libcap2-bin grep rsync xz-utils file git curl bc gpg pigz xxd arch-test \
             qemu-user-static kmod binfmt-support e2fsprogs
-          sudo update-binfmts --enable qemu-aarch64 || true
-          ls /proc/sys/fs/binfmt_misc/
+          # qemu-user-static only because pi-gen's dependency list names it.
+          uname -m
       - name: Check our package names (fast fail)
         # Resolve the RF stage's package list in a trixie arm64 container before
         # the long base build starts.
@@ -120,6 +127,9 @@ jobs:
         env:
           WIFI_COUNTRY: ${{ inputs.wifi_country || 'US' }}
           PIGEN_NATIVE: 1
+          # xz level: 1 is several times faster than 6, for a larger file. The
+          # base builder passes it on from cardputer-zero's faster-image-builds.
+          COMPRESSION_LEVEL: ${{ inputs.compression == 'small' && '6' || '1' }}
         run: |
           chmod +x build/device/zeroshell build/device/rf/*
           image/build.sh build/device
