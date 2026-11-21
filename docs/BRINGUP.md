@@ -97,5 +97,6 @@ something within a sweep or two. **Aircraft** needs a view of the sky: try it by
 | Scanner stops on a channel with nothing on it and stays | The dongle's own centre spike is above the stop line | Press **L** to lock that channel out, and tell me which band: the stop line may need raising. |
 | Aircraft stays empty | Indoors, or the stock antenna is the wrong length for 1090 MHz | Go to a window; shorten a telescopic antenna to about 7 cm. Installing `dump1090-mutability` gives a more sensitive decoder, which the app uses when present. |
 | "Radio service not available" | The home screen can't start `zrfd` | Run `zrfd --source rtlsdr` in a terminal and send what it prints. |
+| The screen stays blank or keeps showing the M5Stack logo | The home screen is drawing on the wrong screen (HDMI), or M5's boot-logo program still holds the LCD | Over SSH, send back the output of `zeroos-lcd-fb`, `cat /sys/class/graphics/fb*/name`, `ls -l /dev/fb*`, `pgrep -a fb_load` and `journalctl -b -u zeroshell --no-pager \| tail -50`. |
 | The home screen doesn't come up | A base OS or display problem, not RF | Everything in step 3 still works over SSH; send the report anyway. |
 | Device resets or the dongle drops out when it starts | USB port can't supply the dongle | Try a short USB extension lead, another port, or run from USB-C power. |
