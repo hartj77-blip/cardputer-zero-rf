@@ -31,7 +31,7 @@ if command -v "$READELF" >/dev/null; then
     [ -n "$NEEDED" ] || echo "note: this zrfd has no RTL-SDR support built in" >&2
 fi
 cp "$ROOT"/docs/THIRD_PARTY.md "$ROOT"/device/README.md "$ROOT"/device/install.sh "$ROOT"/device/bringup.sh "$ROOT"/device/60-zeroos-rf.rules \
-   "$ROOT"/device/zeroos-rf-blacklist.conf "$KIT/"
+   "$ROOT"/device/zeroos-rf-blacklist.conf "$ROOT"/device/zeroos-lcd-fb "$ROOT"/device/zeroshell-lcd.conf "$KIT/"
 git -C "$ROOT" describe --always --dirty > "$KIT/VERSION" 2>/dev/null || echo dev > "$KIT/VERSION"
 tar -C "$STAGE" -czf "$OUT" zeroos-rf
 echo "$OUT: $(ls "$KIT/bin" | tr '\n' ' ')"

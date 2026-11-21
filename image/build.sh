@@ -35,6 +35,7 @@ cp -r "$HERE/stage-zeroos-rf" "$STAGE"
 mkdir -p "$STAGE/files"
 cp "$BUILD"/rf/zrfd "$BUILD"/rf/zrf "$BUILD"/rf/zrf-sim-sensors "$BUILD"/rf/zrf-sim-aircraft "$BUILD"/rf/zrf-sim-aprs "$STAGE/files/"
 cp "$ROOT"/device/bringup.sh "$ROOT"/device/60-zeroos-rf.rules "$ROOT"/device/zeroos-rf-blacklist.conf \
+   "$ROOT"/device/zeroos-lcd-fb "$ROOT"/device/zeroshell-lcd.conf \
    "$ROOT"/docs/THIRD_PARTY.md "$STAGE/files/"
 sed -i "s|@ZEROOS_RF_VERSION@|$VERSION|" "$STAGE/01-run.sh"
 
