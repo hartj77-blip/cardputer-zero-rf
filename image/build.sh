@@ -58,5 +58,7 @@ if [ "$PREPARE_ONLY" = "--prepare-only" ]; then
     echo "Prepared. Builder: $B   RF stage: $STAGE"
     exit 0
 fi
-ZEROOS_VERSION="rf-$VERSION" bash "$B" "$BUILD/zeroshell"
+# The base turns ZeroShell into a zeroos .deb, and a dpkg version must start
+# with a digit ("rf-abc1234" stops the build), so: 0.0.0+rf.<describe>.
+ZEROOS_VERSION="0.0.0+rf.$(printf '%s' "$VERSION" | tr -c 'A-Za-z0-9.+~' '.')" bash "$B" "$BUILD/zeroshell"
 echo "ZeroOS RF image written to $WORK/pi-gen/deploy/"
