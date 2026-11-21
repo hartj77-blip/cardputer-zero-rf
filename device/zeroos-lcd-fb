@@ -1,0 +1,29 @@
+#!/bin/sh
+# Print the framebuffer of the Cardputer Zero's built-in LCD, e.g. /dev/fb1.
+#
+# The LCD is not always /dev/fb0. The HDMI driver (vc4) is in the early boot
+# image and registers first, so it usually takes fb0, and the LCD, whose
+# driver (M5's panel-mipi-dbi-m) loads later from the root filesystem, gets
+# fb1. M5's udev rule names the LCD /dev/fb_lcd; use that, and fall back to
+# the framebuffer whose driver is the MIPI DBI panel.
+#
+# Waits up to $1 seconds (default 15) for the panel driver to come up.
+wait=${1:-15}
+i=0
+while :; do
+    if [ -e /dev/fb_lcd ]; then
+        readlink -f /dev/fb_lcd
+        exit 0
+    fi
+    for n in /sys/class/graphics/fb*; do
+        [ -e "$n/name" ] || continue
+        case "$(cat "$n/name")" in
+            *mipi*|*st7789*) echo "/dev/${n##*/}"; exit 0 ;;
+        esac
+    done
+    [ "$i" -ge "$wait" ] && break
+    i=$((i + 1))
+    sleep 1
+done
+echo "zeroos-lcd-fb: no LCD framebuffer found; using /dev/fb0" >&2
+echo /dev/fb0
