@@ -22,6 +22,14 @@ if [ "${1:-}" = "--uninstall" ]; then
     exit 0
 fi
 
+# On ZeroOS the RF apps are an app like any other: install them from the
+# Apps app (or the package from CI, below). This kit is for M5's stock image.
+if [ -x /usr/bin/zeroos-apps ]; then
+    echo "This is ZeroOS: install the RF apps from the Apps app instead (RF Tools),"
+    echo "or with the package from CI:  sudo zeroos-apps install-file zeroos-app-rf_*.deb"
+    exit 1
+fi
+
 echo "== Packages"
 apt-get update || echo "WARNING: could not refresh the package list; carrying on"
 # One at a time, so a package this image doesn't have can't stop the rest.

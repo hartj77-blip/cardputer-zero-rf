@@ -1,12 +1,13 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.24)
 project(zeroshell-rf VERSION 0.1.0 LANGUAGES C CXX)
 
-# ZeroShell for the RF edition: the base OS's shell, unchanged, plus the RF
-# apps in src/apps and our own launcher list (src/registry.cpp) in place of
-# the base's. The base is the pinned submodule in ../base.
-#
-# This mirrors base/shell/CMakeLists.txt. When the pin moves, check that file
-# for changes.
+# The RF apps for ZeroOS. On the device they are one installable app pack,
+# "rf": the module rf.so (all nine apps) for the base OS's ZeroShell, plus
+# the radio programs in ../rf. image/apps/build.sh packs them.
+# In the simulator and headless builds they are compiled, with every base
+# app, into a ZeroShell of our own, for development and screenshots.
+# The base OS is the pinned submodule in ../base; this mirrors
+# base/shell/CMakeLists.txt, so when the pin moves, check that file.
 #
 # Backends:
 #   sim      SDL2 window on a desktop PC (development)
@@ -69,19 +70,42 @@ add_library(quirc STATIC
   ${quirc_SOURCE_DIR}/lib/quirc.c ${quirc_SOURCE_DIR}/lib/version_db.c)
 target_include_directories(quirc PUBLIC ${quirc_SOURCE_DIR}/lib)
 
-# The radio core: the daemon the RF apps talk to, and the client library.
+# The radio core: the daemon the RF apps talk to, and the client library,
+# which goes into rf.so (so it must be position-independent).
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_subdirectory(../rf rf)
 
-file(GLOB_RECURSE BASE_SOURCES CONFIGURE_DEPENDS ${BASE_SHELL}/src/*.cpp ${BASE_SHELL}/src/fonts/*.c)
-list(FILTER BASE_SOURCES EXCLUDE REGEX "/apps/registry\\.cpp$")
-file(GLOB_RECURSE RF_SOURCES CONFIGURE_DEPENDS src/*.cpp)
+if(ZS_BACKEND STREQUAL "device")
+  set(_zs_modules_default ON)
+else()
+  set(_zs_modules_default OFF)
+endif()
+option(ZS_APPS_AS_MODULES "Build the RF apps as the installable module rf.so" ${_zs_modules_default})
+include(${BASE_SHELL}/cmake/ZeroShellApps.cmake)
+if(NOT ZS_APPS_AS_MODULES)
+  include(${BASE_SHELL}/apps.cmake)   # the simulator has every base app too
+endif()
+include(apps.cmake)
 
-add_executable(zeroshell ${BASE_SOURCES} ${RF_SOURCES})
+# The shell: the base's src/ without any of its apps (apps.cmake adds them).
+file(GLOB_RECURSE BASE_SOURCES CONFIGURE_DEPENDS ${BASE_SHELL}/src/*.cpp ${BASE_SHELL}/src/fonts/*.c)
+file(GLOB BASE_APPS CONFIGURE_DEPENDS ${BASE_SHELL}/src/apps/*.cpp)
+list(REMOVE_ITEM BASE_APPS ${BASE_SHELL}/src/apps/common.cpp ${BASE_SHELL}/src/apps/registry.cpp)
+list(REMOVE_ITEM BASE_SOURCES ${BASE_APPS})
+
+add_executable(zeroshell ${BASE_SOURCES})
 target_include_directories(zeroshell PRIVATE ${BASE_SHELL}/src src)
 target_compile_definitions(zeroshell PRIVATE
   ZS_VERSION="${PROJECT_VERSION}-rf"
   ZS_BACKEND_NAME="${ZS_BACKEND}")
 target_compile_options(zeroshell PRIVATE -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(zeroshell PRIVATE lvgl quirc zrfclient pthread m)
+zs_link_lvgl(zeroshell)
+target_link_libraries(zeroshell PRIVATE quirc pthread m)
+zs_apps_build(zeroshell ${BASE_SHELL}/src)
+if(ZS_APPS_AS_MODULES)
+  # The device runs the base OS's ZeroShell; ours is only built for tests
+  # (shell/tools/modules-test.sh loads rf.so into it).
+  set_target_properties(zeroshell PROPERTIES EXCLUDE_FROM_ALL ON)
+endif()
 
 install(TARGETS zeroshell RUNTIME DESTINATION bin)

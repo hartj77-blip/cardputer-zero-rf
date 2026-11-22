@@ -60,6 +60,14 @@ jobs:
       - name: Render the RF screens (fails if the app crashes)
         if: steps.base.outputs.have == '1'
         run: shell/tools/screenshots.sh build/headless build/screenshots
+      - name: RF apps as the installable module rf.so (fails if it won't load or an app crashes)
+        if: steps.base.outputs.have == '1'
+        run: |
+          cmake -S shell -B build/modules -DZS_BACKEND=headless -DZS_APPS_AS_MODULES=ON
+          cmake --build build/modules -j"$(nproc)"
+          cmake --build build/modules --target zeroshell -j"$(nproc)"
+          PATH="$PWD/build/modules/rf:$PATH" base/shell/tools/modules-test.sh build/modules \
+            spectrum scanner sensors aircraft aprs ft8 logbook sdrserver station
       - uses: actions/upload-artifact@v4
         if: steps.base.outputs.have == '1'
         with:
@@ -67,7 +75,7 @@ jobs:
           path: build/screenshots
 
   device:
-    name: Device kit (arm64)
+    name: RF app and device kit (arm64)
     runs-on: ubuntu-24.04-arm
     # Built on the system the device runs, not on the runner's Ubuntu: the two
     # ship the RTL-SDR library under different names (librtlsdr.so.0 on Debian
@@ -99,12 +107,31 @@ jobs:
           fi
       - name: Install build tools
         run: apt-get install -y cmake g++ pkg-config librtlsdr-dev binutils file
-      - name: Build radio programs and home screen
+      - name: Build the RF app (rf.so and the radio programs)
         if: steps.base.outputs.have == '1'
         run: |
           cmake -S shell -B build/device -DZS_BACKEND=device -DCMAKE_CXX_FLAGS=-mcpu=cortex-a53 -DCMAKE_C_FLAGS=-mcpu=cortex-a53
           cmake --build build/device -j"$(nproc)"
           build/device/rf/test_dsp
+      # The app for ZeroOS: the Apps app installs it from a release; try this
+      # build with: sudo zeroos-apps install-file zeroos-app-rf_*.deb
+      - name: Pack the RF app
+        if: steps.base.outputs.have == '1'
+        run: |
+          apt-get install -y dpkg-dev
+          git config --global --add safe.directory "$PWD/base"
+          app/build.sh build/device build/app
+      - uses: actions/upload-artifact@v4
+        if: steps.base.outputs.have == '1'
+        with:
+          name: zeroos-app-rf
+          path: build/app/
+      # The kit for M5's stock image: a ZeroShell with every app built in.
+      - name: Build the kit's home screen
+        if: steps.base.outputs.have == '1'
+        run: |
+          cmake -S shell -B build/kit -DZS_BACKEND=device -DZS_APPS_AS_MODULES=OFF -DCMAKE_CXX_FLAGS=-mcpu=cortex-a53 -DCMAKE_C_FLAGS=-mcpu=cortex-a53
+          cmake --build build/kit -j"$(nproc)"
       - name: Build radio programs only
         if: steps.base.outputs.have != '1'
         run: |
@@ -112,7 +139,9 @@ jobs:
           cmake --build build/device -j"$(nproc)"
           build/device/test_dsp
       - name: Pack the kit
-        run: tools/package-device.sh build/device build/zeroos-rf-arm64.tar.gz
+        run: |
+          [ -d build/kit ] && kit=build/kit || kit=build/device
+          tools/package-device.sh "$kit" build/zeroos-rf-arm64.tar.gz
       - name: The packed radio program starts on this system
         run: |
           tar -xzf build/zeroos-rf-arm64.tar.gz -C /tmp
