@@ -56,5 +56,12 @@ jobs:
         run: |
           pre=()
           case "$GITHUB_REF_NAME" in *-*) pre=(--prerelease --latest=false) ;; esac
-          gh release create "$GITHUB_REF_NAME" app/zeroos-app-rf_*.deb app/zeroos-apps.index \
-            --repo "$GITHUB_REPOSITORY" --title "RF apps ${GITHUB_REF_NAME#v}" --generate-notes "${pre[@]}"
+          # A release made by hand on GitHub (Releases > Draft a new release,
+          # which also makes the tag) gets the files added to it.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" app/zeroos-app-rf_*.deb app/zeroos-apps.index \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" app/zeroos-app-rf_*.deb app/zeroos-apps.index \
+              --repo "$GITHUB_REPOSITORY" --title "RF apps ${GITHUB_REF_NAME#v}" --generate-notes "${pre[@]}"
+          fi
