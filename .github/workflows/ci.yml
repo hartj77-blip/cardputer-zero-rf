@@ -126,6 +126,29 @@ jobs:
         with:
           name: zeroos-app-rf
           path: build/app/
+      # The RF apps in the device build of ZeroShell, with a fake screen and
+      # keyboard (base/shell/tests/device): each opened from the home screen,
+      # keys pressed, Esc back. Once with simulated hardware, once with the
+      # device's hardware layer and no dongle plugged in.
+      - name: Open every RF app with the keyboard, with and without a dongle
+        if: steps.base.outputs.have == '1'
+        run: |
+          apt-get install -y python3 python3-pil gcc
+          cmake --build build/device --target zeroshell -j"$(nproc)"
+          gcc -shared -fPIC -o build/fakedev.so base/shell/tests/device/fakedev.c -ldl
+          python3 base/shell/tests/device/apps_test.py build/device/zeroshell build/fakedev.so build/rf-screens \
+            --apps build/device/apps --path build/device/rf --settle 4 \
+            --expect spectrum,scanner,sensors,aircraft,aprs,ft8,logbook,sdrserver,station
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.base.outputs.have == '1'
+        with:
+          name: rf-app-screens
+          path: build/rf-screens
+      # The package the Apps app downloads, installed with the real apt on
+      # Debian trixie arm64 (what the Cardputer runs), then removed.
+      - name: Install and remove the RF app for real
+        if: steps.base.outputs.have == '1'
+        run: base/image/tests/apps-install-test.sh build/app build/device/zeroshell
       # The kit for M5's stock image: a ZeroShell with every app built in.
       - name: Build the kit's home screen
         if: steps.base.outputs.have == '1'

@@ -50,8 +50,8 @@ rig, and **T** sends the displayed frequency to the rig. Set the rig up in Stati
 ## Station
 
 Your callsign and grid locator, the dongle's frequency correction (ppm), antenna power (bias tee),
-the APRS frequency, and the rig for Hamlib (model number, serial port, speed). See
-[docs/HAM.md](docs/HAM.md).
+the APRS frequency, and the rig for Hamlib (model number, serial port, speed). Enter edits a
+field, Enter again saves it, Esc cancels. See [docs/HAM.md](docs/HAM.md).
 
 ## APRS
 
@@ -156,6 +156,12 @@ shell/tools/screenshots.sh build/headless build/screenshots
 CI fetches the base submodule. If the base repository is ever private again, add a repository
 secret named `BASE_REPO_TOKEN` holding a fine-grained token with read-only Contents access to
 `cardputer-zero`; without it the RF shell and app jobs skip. The radio core job needs no token.
+
+The device job also tests the RF apps the way the Cardputer runs them: the device build of the
+home screen, with a fake screen and keyboard, opens each of the nine apps, presses keys and goes
+back (once with simulated radio, once with no dongle). Then it installs the RF Tools package with
+the real `apt` on Debian trixie arm64 and removes it again. Both tests live in the base
+(`base/shell/tests/device/apps_test.py`, `base/image/tests/apps-install-test.sh`).
 
 ## Docs
 

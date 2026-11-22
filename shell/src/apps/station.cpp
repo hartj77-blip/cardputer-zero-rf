@@ -58,6 +58,7 @@ public:
 
     bool on_key(uint32_t key) override {
         if (editing_ < 0) return false;   // the list handles Up, Down and Enter
+        if (key == LV_KEY_ESC) return false;   // the shell calls on_back(), which cancels the edit
         const Field& f = kFields[editing_];
         if (key == LV_KEY_ENTER) {
             commit();
