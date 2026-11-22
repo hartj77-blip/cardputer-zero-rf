@@ -33,7 +33,7 @@ On the device, over SSH:
 The installer needs the internet. It installs the SDR packages, lets you open the dongle without
 root, keeps the kernel's TV driver off it, and installs the programs.
 
-- On a ZeroOS image it replaces the home screen with the RF edition (the original is kept).
+- On a ZeroOS image it stops: there, install RF Tools from the Apps app instead.
 - On M5Stack's stock image it installs alongside. `zeroos-rf-start` shows the RF home screen on
   the built-in screen (log out and in once first, so new group memberships apply);
   `zeroos-rf-stop`, or Ctrl-C, brings M5's launcher back.

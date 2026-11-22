@@ -3,16 +3,17 @@
 The Cardputer Zero boots from a microSD card. The Lite ships without one, so this is the first
 thing to do. You need a microSD card of **16 GB or more**, a card reader, and a computer.
 
-There are three systems you can put on the card. Start with the first.
+There are two systems you can put on the card. Start with the first.
 
 | | What | When to use it |
 | --- | --- | --- |
-| **A. M5Stack's stock image** | The official system. Known to boot. ZeroOS RF installs on top of it. | First boot of a new unit, and whenever you want a known-good fallback. |
-| **B. The ZeroOS image** | Our own base OS, built by the `cardputer-zero` repository. | Once that image has been seen to boot. **It has not been tried on hardware yet.** |
-| **C. The ZeroOS RF image** | The ZeroOS image with the RF home screen and radio programs already installed. Nothing to install afterwards. | Once B is known to boot. **Never built to completion or booted yet.** |
+| **A. M5Stack's stock image** | The official system. Known to boot. The RF kit installs on top of it. | First boot of a new unit, and whenever you want a known-good fallback. |
+| **B. The ZeroOS image** | Our own base OS, built by the `cardputer-zero` repository. The RF apps are one app in its **Apps** app, **RF Tools**. | Once that image has been seen to boot. **It has not been tried on hardware yet.** |
 
-After A or B, [install the RF kit](#3-install-zeroos-rf) and run the first-run check. After C, go
-straight to the check.
+After A, [install the RF kit](#3-install-the-rf-kit-stock-image). After B,
+[install RF Tools](#2-install-rf-tools-zeroos). Then run the first-run check. (There used to be a
+separate ZeroOS RF image; the RF apps are an installable app now instead. The base's **Build
+image** workflow can put apps on a card ready-installed.)
 
 Nothing on this page has been tried by us on a real unit. The stock steps follow M5Stack's own
 [image guide](https://docs.m5stack.com/en/compute/cardputerzero/image) and
@@ -80,31 +81,25 @@ boot is exactly what is still unproven.
 xzcat 2026-11-19-zeroos-cardputerzero-arm64.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
-## C. ZeroOS RF image (never booted)
+## 2. Install RF Tools (ZeroOS)
 
-The same as B, built from this repository, with everything in the kit already installed: the RF
-home screen, the radio programs, the SDR packages and the dongle access rules.
-
-1. In this repository on GitHub, open **Actions → Build image → Run workflow** and set the Wi-Fi
-   country code. It takes 1.5 to 3 hours. It needs access to the base repository (the
-   `BASE_REPO_TOKEN` secret, unless the base is public).
-2. Download the `zeroos-rf-image` artifact from the run and unzip it. Inside is a file named like
-   `2026-11-20-zeroos-rf-cardputerzero-arm64.img.xz`.
-3. Write it to the card and boot exactly as in B. The defaults are the same: username `pi`,
-   password `raspberry`, hostname `cardputer`, SSH on.
-4. Plug in the dongle and run `zeroos-rf-bringup`. There is no installer step.
-
-To build it on your own machine instead (Docker, about 20 GB of disk, an arm64 build of the
-programs first):
+On the device, open **Apps**, pick **RF Tools**, and press **Install** (it needs Wi-Fi). It comes
+from this repository's newest release. Until there is one, take `zeroos-app-rf_*.deb` from the
+newest successful **CI** run (*Actions → CI → the run → Artifacts → zeroos-app-rf*), copy it over
+and install it:
 
 ```bash
-image/build.sh build/device
+scp zeroos-app-rf_*.deb pi@cardputer.local:
+ssh pi@cardputer.local sudo zeroos-apps install-file zeroos-app-rf_*.deb
 ```
 
-## 3. Install ZeroOS RF
+Plug in the dongle and antenna, then run the check: `zeroos-rf-bringup`.
 
-The kit is one file, `zeroos-rf-arm64.tar.gz`: the RF home screen, the radio programs, an
-installer and a first-run check. Get it from the newest successful **CI** run on this repository
+## 3. Install the RF kit (stock image)
+
+The kit is one file, `zeroos-rf-arm64.tar.gz`: a home screen with every ZeroOS and RF app built
+in, the radio programs, an installer and a first-run check. It is for M5Stack's stock image; on
+ZeroOS it refuses and points you to RF Tools above. Get it from the newest successful **CI** run on this repository
 (*Actions → CI → the run → Artifacts → zeroos-rf-arm64*), or build it as the main README describes.
 A kit built by CI without access to the base repository holds the radio programs but not the home
 screen; the installer says which it is.

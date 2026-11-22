@@ -1,0 +1,60 @@
+name: Release
+
+# Pushing a tag like v0.2.0 publishes the RF app for ZeroOS: the package
+# zeroos-app-rf and zeroos-apps.index become a GitHub release, which is where
+# the Apps app on a ZeroOS device looks (this repository is one of its
+# default sources; see docs/APPS.md in the base OS).
+# Build the release from a base pin with the same app ABI (ZS_APP_ABI) as
+# the ZeroOS release devices run, or they will not be offered the app.
+on:
+  push:
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    # Debian trixie, the device's system (see ci.yml: librtlsdr's name differs on Ubuntu).
+    container: debian:trixie
+    steps:
+      - name: Install tools
+        run: apt-get update && apt-get install -y git ca-certificates cmake g++ pkg-config librtlsdr-dev binutils dpkg-dev
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # app/version.sh reads the tag
+          submodules: true
+      - name: Build and test
+        run: |
+          git config --global --add safe.directory "$PWD"
+          git config --global --add safe.directory "$PWD/base"
+          cmake -S shell -B build/device -DZS_BACKEND=device -DCMAKE_CXX_FLAGS=-mcpu=cortex-a53 -DCMAKE_C_FLAGS=-mcpu=cortex-a53
+          cmake --build build/device -j"$(nproc)"
+          build/device/rf/test_dsp
+      - name: Pack
+        run: |
+          app/build.sh build/device build/app
+          # The tag is the version: v0.2.0 must give zeroos-app-rf_0.2.0_arm64.deb.
+          test -f "build/app/zeroos-app-rf_${GITHUB_REF_NAME#v}_arm64.deb"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: build/app/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: app
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=()
+          case "$GITHUB_REF_NAME" in *-*) pre=(--prerelease --latest=false) ;; esac
+          gh release create "$GITHUB_REF_NAME" app/zeroos-app-rf_*.deb app/zeroos-apps.index \
+            --repo "$GITHUB_REPOSITORY" --title "RF apps ${GITHUB_REF_NAME#v}" --generate-notes "${pre[@]}"

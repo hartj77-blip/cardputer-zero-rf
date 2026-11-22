@@ -41,8 +41,8 @@ sudo zeroos-rf/install.sh
 The installer needs the internet. It installs `rtl-sdr`, `rtl-433` and `sox`, lets the normal user
 open the dongle, keeps the kernel's TV driver off it, and installs the programs.
 
-- On a **ZeroOS** image it replaces the home screen with the RF edition (the original is kept as
-  `/usr/bin/zeroshell.base`) and restarts it.
+- On a **ZeroOS** image it stops: install **RF Tools** from the Apps app instead
+  ([FLASHING.md](FLASHING.md#2-install-rf-tools-zeroos)), then carry on at step 3.
 - On the **stock** image it installs alongside M5's launcher. Log out and back in once, then
   `zeroos-rf-start` shows the RF home screen on the built-in screen, and `zeroos-rf-stop` (or
   Ctrl-C) brings M5's launcher back. This swap is the least certain part of the kit: if the screen

@@ -1,0 +1,19 @@
+# The RF app pack for ZeroOS (the base OS's docs/APPS.md): nine apps in one
+# module, rf.so, and the radio programs they drive.
+NAME="RF Tools"
+HOMEPAGE=https://github.com/hartj77-blip/cardputer-zero-rf
+SUMMARY="Spectrum, Scanner, Sensors, Aircraft, APRS, FT8, Logbook, SDR Server and Station, for an RTL-SDR dongle"
+DEPENDS="rtl-sdr, rtl-433, multimon-ng, libhamlib-utils, uhubctl, sox, usbutils"
+NEEDS="rtl-sdr, rtl-433, multimon-ng, Hamlib"
+payload() {
+    # $F is this repository's device/ folder; $BIN holds the built programs.
+    install -d "$D/usr/bin"
+    for p in zrfd zrf zrf-sim-sensors zrf-sim-aircraft zrf-sim-aprs; do
+        install -m 0755 "$BIN/$p" "$D/usr/bin/$p"
+    done
+    install -m 0755 "$F/bringup.sh" "$D/usr/bin/zeroos-rf-bringup"
+    # Let the normal user open an RTL-SDR dongle, and keep the kernel's TV driver off it.
+    install -D -m 0644 "$F/60-zeroos-rf.rules" "$D/etc/udev/rules.d/60-zeroos-rf.rules"
+    install -D -m 0644 "$F/zeroos-rf-blacklist.conf" "$D/etc/modprobe.d/zeroos-rf-blacklist.conf"
+    install -D -m 0644 "$F/../docs/THIRD_PARTY.md" "$D/usr/share/doc/zeroos-app-rf/THIRD_PARTY.md"
+}

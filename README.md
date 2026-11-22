@@ -1,7 +1,9 @@
 # cardputer-zero-rf
 
-ZeroOS RF: a radio-focused edition of ZeroOS for the M5Stack Cardputer Zero Lite, built around a
-USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
+The RF apps for ZeroOS on the M5Stack Cardputer Zero, built around a USB software-defined radio
+dongle (RTL-SDR Blog V4 first, others later). On ZeroOS they are one app, **RF Tools**, that you
+install from the **Apps** app: it adds nine apps to the home screen and the radio programs they
+drive, and removing it takes them away again. There is no separate RF image any more.
 
 ![RF screens](docs/screenshots/contact-sheet.png)
 
@@ -10,10 +12,10 @@ USB software-defined radio dongle (RTL-SDR Blog V4 first, others later).
 | Part | Status |
 | --- | --- |
 | `rf/` radio core: receiver backends, spectrum, FM and AM demodulation, the radio daemon `zrfd` and its protocol | Working against a simulated receiver and recorded files. Never run on a real dongle; audio checked by measurement, never by ear. |
-| `shell/` the base OS's ZeroShell plus the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **APRS**, **FT8**, **Logbook**, **SDR Server**, **Station** | Working in the simulator and headless builds; builds for arm64. Never run on a device. |
-| `device/` the kit for a real unit: installer and first-run check | Dry-run against the simulated radio only. See [docs/BRINGUP.md](docs/BRINGUP.md). |
+| `shell/` the RF apps: **Spectrum**, **Scanner**, **Sensors**, **Aircraft**, **APRS**, **FT8**, **Logbook**, **SDR Server**, **Station**. On the device one module, `rf.so`, for ZeroOS's home screen | Working in the simulator and headless builds, and loaded as a module there; builds for arm64. Never run on a device. |
+| `app/` the RF Tools package for ZeroOS's Apps app (`zeroos-app-rf`) and its `zeroos-apps.index` | Built in CI; a release publishes them. Never installed on a device. |
+| `device/` the first-run check, dongle rules, and a kit for M5's stock image | Dry-run against the simulated radio only. See [docs/BRINGUP.md](docs/BRINGUP.md). |
 | `base/` the base OS, [cardputer-zero](https://github.com/hartj77-blip/cardputer-zero), pinned as a submodule | Unchanged; we build on it, we don't fork it |
-| `image/` a preinstalled SD card image: the base image plus one stage of ours | Written; the preparation step is tested, the image itself has never been built or booted |
 
 ## Spectrum
 
@@ -103,29 +105,31 @@ Wireless weather stations, tyre sensors, doorbells and remotes, decoded by
 
 ## On the device
 
-1. [docs/FLASHING.md](docs/FLASHING.md): put a system on the microSD card (the Lite ships without
-   one) and get Wi-Fi and SSH working.
-2. Copy the kit over and run its installer; the same page has the commands.
-3. [docs/BRINGUP.md](docs/BRINGUP.md): the first-run check on a real unit, and what to send back.
+On **ZeroOS**, open **Apps**, pick **RF Tools** and press **Install**. It comes from this
+repository's newest release (tag a version, `v0.1.0`, and the **Release** workflow publishes it).
+Until there is a release, take `zeroos-app-rf_*.deb` from the *RF app and device kit* CI job and
+run `sudo zeroos-apps install-file zeroos-app-rf_*.deb` on the device. Then plug in the dongle and
+run `zeroos-rf-bringup` ([docs/BRINGUP.md](docs/BRINGUP.md)).
 
-The kit comes from CI: the *Device kit (arm64)* job builds it and offers it as a downloadable
-artifact. **It has to be built on Debian trixie**, the system the device runs. Debian and Ubuntu
+The package has to be built on **Debian trixie**, the system the device runs. Debian and Ubuntu
 ship the RTL-SDR library under different names (`librtlsdr.so.0` and `librtlsdr.so.2`), so a
 radio program built on Ubuntu will not start on the device. CI builds in a `debian:trixie` arm64
-container, and the packing script refuses a program linked to the wrong one. To build it yourself
-on an arm64 machine or under emulation:
+container, and `app/build.sh` refuses a program linked to the wrong one. To build it yourself on
+an arm64 machine or under emulation:
 
 ```sh
 docker run --rm --platform linux/arm64 -v "$PWD":/src -w /src debian:trixie sh -c '
-  apt-get update && apt-get install -y git cmake g++ pkg-config librtlsdr-dev binutils file &&
+  apt-get update && apt-get install -y git cmake g++ pkg-config librtlsdr-dev binutils dpkg-dev &&
   cmake -S shell -B build/device -DZS_BACKEND=device && cmake --build build/device -j &&
-  tools/package-device.sh build/device dist/zeroos-rf-arm64.tar.gz'
+  app/build.sh build/device build/app'
 ```
 
-For a card with everything preinstalled, run the **Build image** workflow from the Actions tab
-(1.5 to 3 hours), or `image/build.sh build/device` locally. It runs the base's image builder from
-the `base/` submodule with our home screen and adds one stage, `image/stage-zeroos-rf/`, for the
-radio programs. [docs/FLASHING.md](docs/FLASHING.md) covers writing it to a card.
+The package must be built against a `base/` pin with the same app ABI (`ZS_APP_ABI` in
+`base/shell/src/ui/app.h`) as the ZeroOS on the device; otherwise the Apps app doesn't offer it.
+
+**On M5Stack's stock image** (the only system known to boot so far), the kit from the same CI job
+installs a home screen with every app built in next to M5's launcher; see
+[docs/FLASHING.md](docs/FLASHING.md). On ZeroOS the kit refuses and points you to the Apps app.
 
 ## Build and try on a PC
 
@@ -147,18 +151,17 @@ cmake -S shell -B build/headless -DZS_BACKEND=headless && cmake --build build/he
 shell/tools/screenshots.sh build/headless build/screenshots
 ```
 
-## CI and the private base
+## CI and the base
 
-The base repository is private, so CI here can't fetch it by default and the RF shell job skips
-with a warning, and the device kit holds the radio programs without the home screen. To turn both
-on, add a repository secret named `BASE_REPO_TOKEN` holding a fine-grained token with read-only
-Contents access to `cardputer-zero`. The radio core job needs no token.
+CI fetches the base submodule. If the base repository is ever private again, add a repository
+secret named `BASE_REPO_TOKEN` holding a fine-grained token with read-only Contents access to
+`cardputer-zero`; without it the RF shell and app jobs skip. The radio core job needs no token.
 
 ## Docs
 
 - [docs/PLAN.md](docs/PLAN.md): the architecture, the power, CPU and memory budget, the app list
   and the phases.
-- [docs/FLASHING.md](docs/FLASHING.md): flashing the OS to an SD card and installing the kit.
+- [docs/FLASHING.md](docs/FLASHING.md): flashing the OS to an SD card, installing RF Tools or the kit.
 - [docs/BRINGUP.md](docs/BRINGUP.md): first run on a real device, and what to send back.
 - [docs/HAM.md](docs/HAM.md): for amateur radio operators: bands, modes, rig control, what's missing.
 - [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md): other people's code we build in, and its licences.
